@@ -1,0 +1,337 @@
+USE dnsdata
+USE dnsdirect
+
+INTEGER nfmin,nfmax,maxquote,flag_eps
+ASK nfmin,nfmax,maxquote; nftot=nfmax-nfmin+1
+ARRAY(1..maxquote) OF INTEGER quota
+DO ASK quota(i) FOR ALL i
+ASK flag_eps
+
+REALVEL=STRUCTURE(REAL u,v,w)
+SPECTRUM=STRUCTURE(REAL uu,uv,uw,vv,vw,ww)
+DERIVS=STRUCTURE(COMPLEX ux,uy,uz,vx,vy,vz,wx,wy,wz)
+DERPRODS=STRUCTURE(COMPLEX ux2,vx2,wx2,uy2,vy2,wy2,uz2,vz2,wz2,uyvx,uzwx,wyvz)
+
+VELOCITY x_cor(0..nxd-1,1..maxquote)=0, z_cor(0..nzd-1,1..maxquote)=0,plane_cor(0..nxd-1,0..nzd-1,1..maxquote)=0
+REALVEL mean(-1..ny DIV 2)=0; SPECTRUM rms(-1..ny DIV 2)=0
+ARRAY(-1..ny+1) OF REAL dUdy=0, meanvel=0
+SPECTRUM plane_psd(0..nx,-nz..nz,1..maxquote), plane_dsd(0..nx,-nz..nz,1..maxquote)
+SPECTRUM x_psd(0..nx,1..maxquote), z_psd(-nz..nz,1..maxquote)
+REAL avfru=0,avfrw=0
+DERIVS Vder(0..nx,-nz..nz)=0
+DERIVS Vderd(0..nxd-1,0..nzd-1)=0
+DERPRODS VVderd(0..nxd-1,0..nzd-1)=0 
+ARRAY(0..ny) OF REAL eps=0
+ARRAY(0..ny) OF REAL peps=0
+ARRAY(-1..ny+1) OF VELOCITY Vy=0
+
+LOOP files FOR n=nfmin TO nfmax
+
+ ARRAY(0..20) OF CHAR field_name = WRITE("Field"n".fld")
+ WRITE "Reading field_file",field_name
+ diskfield=OPEN(field_name)
+ WITH diskfield
+   WRITE BY NAME timage
+   V(0,0,*).u.REAL=uavimage(miny..maxy)
+   V(0,0,*).w.REAL=wavimage(miny..maxy)
+	LOOP FOR iy = miny TO maxy
+	    DO V(ix,iz,iy).v=fieldimage(iy,ix,iz).v FOR ALL ix,iz EXCEPT ix=0 AND iz=0
+	    DO V(ix,iz,iy).u=fieldimage(iy,ix,iz).eta FOR ALL ix,iz EXCEPT ix=0 AND iz=0
+	REPEAT LOOP
+ CLOSE diskfield 
+ vetaTOuvw
+
+ LOOP FOR iy=LO TO HI WITH mean(iy)
+   u=~+1/2*[V(0,0,iy).u.REAL + V(0,0,ny-iy).u.REAL]
+   w=~+1/2*[V(0,0,iy).w.REAL + V(0,0,ny-iy).w.REAL] 
+ REPEAT
+
+ DO meanvel(iy)=~+V(0,0,iy).u.REAL FOR iy=-1 TO ny+1
+
+
+ IF flag_eps=1 THEN
+ LOOP FOR iy=0 TO ny
+   LOOP FOR ALL ix,iz WITH Vder(ix,iz),V(ix,iz,*)
+     Vy=0
+     ialfa = -I*alfa0*ix; ibeta = -I*beta0*iz 
+     ux=ialfa*u(iy); vx=ialfa*v(iy); wx=ialfa*w(iy)
+     uz=ibeta*u(iy); vz=ibeta*v(iy); wz=ibeta*w(iy)
+     deriv(u(*).REAL,Vy.u.REAL); LeftLUDivStep2(Vy.u.REAL,D0mat) 
+     deriv(u(*).IMAG,Vy.u.IMAG); LeftLUDivStep2(Vy.u.IMAG,D0mat) 
+     deriv(v(*).REAL,Vy.v.REAL); LeftLUDivStep2(Vy.v.REAL,D0mat) 
+     deriv(v(*).IMAG,Vy.v.IMAG); LeftLUDivStep2(Vy.v.IMAG,D0mat)
+     deriv(w(*).REAL,Vy.w.REAL); LeftLUDivStep2(Vy.w.REAL,D0mat)
+     deriv(w(*).IMAG,Vy.w.IMAG); LeftLUDivStep2(Vy.w.IMAG,D0mat)
+     uy=Vy(iy).u; vy=Vy(iy).v; wy=Vy(iy).w
+     IF ix=0 AND iz=0 THEN uy=0; vy=0; wy=0 
+   REPEAT LOOP
+   Vderd=0
+   LOOP FOR ix=0 TO nx
+     Vderd(ix,0..nz) = Vder(ix,0..nz)
+     Vderd(ix,nzd+(-nz..-1)) = Vder(ix,-nz..-1)
+     WITH Vderd(ix,*): IFT(ux); IFT(uy); IFT(uz); IFT(vx); IFT(vy); IFT(vz); IFT(wx); IFT(wy); IFT(wz)
+   REPEAT LOOP
+   DO
+     WITH Vderd(*,iz): RFT(ux); RFT(uy); RFT(uz); RFT(vx); RFT(vy); RFT(vz); RFT(wx); RFT(wy); RFT(wz)
+     DO WITH Vderd(ix,iz), VVderd(ix,iz):
+       ux2.REAL=ux.REAL^2; ux2.IMAG=ux.IMAG^2
+       uy2.REAL=uy.REAL^2; uy2.IMAG=uy.IMAG^2
+       uz2.REAL=uz.REAL^2; uz2.IMAG=uz.IMAG^2
+       vx2.REAL=vx.REAL^2; vx2.IMAG=vx.IMAG^2
+       vy2.REAL=vy.REAL^2; vy2.IMAG=vy.IMAG^2
+       vz2.REAL=vz.REAL^2; vz2.IMAG=vz.IMAG^2
+       wx2.REAL=wx.REAL^2; wx2.IMAG=wx.IMAG^2
+       wy2.REAL=wy.REAL^2; wy2.IMAG=wy.IMAG^2
+       wz2.REAL=wz.REAL^2; wz2.IMAG=wz.IMAG^2
+       uyvx.REAL=uy.REAL*vx.REAL; uyvx.IMAG=uy.IMAG*vx.IMAG
+       uzwx.REAL=uz.REAL*wx.REAL; uzwx.IMAG=uz.IMAG*wx.IMAG
+       wyvz.REAL=wy.REAL*vz.REAL; wyvz.IMAG=wy.IMAG*vz.IMAG
+     FOR ALL ix
+     WITH VVderd(*,iz):
+     HFT(ux2);HFT(vx2);HFT(wx2)
+     HFT(uy2);HFT(vy2);HFT(wy2)
+     HFT(uz2);HFT(vz2);HFT(wz2)
+     HFT(uyvx);HFT(uzwx);HFT(wyvz)
+   FOR iz=0 TO nzd-1
+   DO WITH VVderd(ix,*)
+     FFT(ux2);FFT(vx2);FFT(wx2)
+     FFT(uy2);FFT(vy2);FFT(wy2)
+     FFT(uz2);FFT(vz2);FFT(wz2)
+     FFT(uyvx);FFT(uzwx);FFT(wyvz)
+   FOR ix=0 TO nxd-1
+ !WRONG BY A FACTOR 2?
+   WITH VVderd(0,0): eps(iy)=~+ni*REAL[ux2+vy2+wz2+uyvx+uzwx+wyvz+uy2+uz2+vx2+vz2+wx2+wy2]
+   WITH VVderd(0,0): peps(iy)=~+ni*REAL(ux2+uy2+uz2+vx2+vy2+vz2+wx2+wy2+wz2)
+ REPEAT LOOP
+
+ LOOP FOR i=1 TO maxquote
+   LOOP FOR ALL ix,iz WITH V(ix,iz,*),Vder(ix,iz),plane_dsd(ix,iz,i)
+     Vy=0
+     ialfa=-I*alfa0*ix; ibeta=-I*beta0*iz 
+     ux=ialfa*u(quota(i));vx=ialfa*v(quota(i));wx=ialfa*w(quota(i))
+     uz=ibeta*u(quota(i));vz=ibeta*v(quota(i));wz=ibeta*w(quota(i))
+     deriv(u(*).REAL,Vy.u.REAL); LeftLUDivStep2(Vy.u.REAL,D0mat) 
+     deriv(u(*).IMAG,Vy.u.IMAG); LeftLUDivStep2(Vy.u.IMAG,D0mat) 
+     deriv(v(*).REAL,Vy.v.REAL); LeftLUDivStep2(Vy.v.REAL,D0mat) 
+     deriv(v(*).IMAG,Vy.v.IMAG); LeftLUDivStep2(Vy.v.IMAG,D0mat) 
+     deriv(w(*).REAL,Vy.w.REAL); LeftLUDivStep2(Vy.w.REAL,D0mat) 
+     deriv(w(*).IMAG,Vy.w.IMAG); LeftLUDivStep2(Vy.w.IMAG,D0mat) 
+     uy=Vy(quota(i)).u; vy=Vy(quota(i)).v; wy=Vy(quota(i)).w
+     uu =~ + ABS(ux|ux) + ABS(uy|uy) + ABS(uz|uz)
+     uv =~ + ABS(ux|vx) + ABS(uy|vy) + ABS(uz|vz)
+     uw =~ + ABS(ux|wx) + ABS(uy|wy) + ABS(uz|wz)
+     vv =~ + ABS(vx|vx) + ABS(vy|vy) + ABS(vz|vz)
+     vw =~ + ABS(vx|wx) + ABS(vy|wy) + ABS(vz|wz)
+     ww =~ + ABS(wx|wx) + ABS(wy|wy) + ABS(wz|wz)
+   REPEAT LOOP
+ REPEAT LOOP
+ END IF
+
+ !!!friction at position -1
+ LOOP FOR ALL ix,iz
+   V(ix,iz,-1).u= - ( - SUM d140(i)*V(ix,iz,1+i).u FOR i=-2 TO 2)
+   V(ix,iz,-1).w= - ( - SUM d140(i)*V(ix,iz,1+i).w FOR i=-2 TO 2)
+   V(ix,iz,ny+1).u= - SUM d14n(i)*V(ix,iz,ny+i-1).u FOR i=-2 TO 2
+   V(ix,iz,ny+1).w= - SUM d14n(i)*V(ix,iz,ny+i-1).w FOR i=-2 TO 2
+ REPEAT LOOP
+
+ avfru=~+1/2*[V(0,0,-1).u.REAL + V(0,0,ny+1).u.REAL]
+ avfrw=~+1/2*[V(0,0,-1).w.REAL + V(0,0,ny+1).w.REAL] 
+
+ LOOP FOR iy=LO TO HI WITH rms(iy)    
+   uu=~+1/2*{[NORM[V(0,*,iy).u] + 2*[SUM NORM[V(ix,*,iy).u] FOR ix=1 TO nx]] + [NORM[V(0,*,ny-iy).u] + 2*[SUM NORM[V(ix,*,ny-iy).u] FOR ix=1 TO nx]]};
+   vv=~+1/2*{[NORM[V(0,*,iy).v] + 2*[SUM NORM[V(ix,*,iy).v] FOR ix=1 TO nx]] + [NORM[V(0,*,ny-iy).v] + 2*[SUM NORM[V(ix,*,ny-iy).v] FOR ix=1 TO nx]]};
+   ww=~+1/2*{[NORM[V(0,*,iy).w] + 2*[SUM NORM[V(ix,*,iy).w] FOR ix=1 TO nx]] + [NORM[V(0,*,ny-iy).w] + 2*[SUM NORM[V(ix,*,ny-iy).w] FOR ix=1 TO nx]]};
+   uv=~+1/2*{[2*[SUM (V(ix,*,iy).u | V(ix,*,iy).v).REAL FOR ix=1 TO nx]] + [-2*[SUM (V(ix,*,ny-iy).u | V(ix,*,ny-iy).v).REAL FOR ix=1 TO nx]]}
+   uv=~+1/2*{[V(0,*,iy).u | V(0,*,iy).v].REAL + (-1)*[V(0,*,ny-iy).u | V(0,*,ny-iy).v].REAL}  
+   uw=~+1/2*{[2*[SUM (V(ix,*,iy).u | V(ix,*,iy).w).REAL FOR ix=1 TO nx]] + [2*[SUM (V(ix,*,ny-iy).u | V(ix,*,ny-iy).w).REAL FOR ix=1 TO nx]]}
+   uw=~+1/2*{[V(0,*,iy).u | V(0,*,iy).w].REAL + [V(0,*,ny-iy).u | V(0,*,ny-iy).w].REAL}
+   vw=~+1/2*{[2*[SUM (V(ix,*,iy).v | V(ix,*,iy).w).REAL FOR ix=1 TO nx]] + [-2*[SUM (V(ix,*,ny-iy).v | V(ix,*,ny-iy).w).REAL FOR ix=1 TO nx]]} 
+   vw=~+1/2*{[V(0,*,iy).v | V(0,*,iy).w].REAL + (-1)*[V(0,*,ny-iy).v | V(0,*,ny-iy).w].REAL}
+ REPEAT LOOP
+
+
+ LOOP FOR i=1 TO maxquote
+   LOOP FOR ALL ix,iz WITH plane_psd(ix,iz,i):
+     uu=~+1/2/alfa0/beta0*{NORM[V(ix,iz,quota(i)).u] + NORM[V(ix,iz,ny-quota(i)).u]}
+     vv=~+1/2/alfa0/beta0*{NORM[V(ix,iz,quota(i)).v] + NORM[V(ix,iz,ny-quota(i)).v]}
+     ww=~+1/2/alfa0/beta0*{NORM[V(ix,iz,quota(i)).w] + NORM[V(ix,iz,ny-quota(i)).w]}
+   REPEAT LOOP 
+ REPEAT LOOP
+
+REPEAT files 
+
+
+IF flag_eps=1 THEN
+ DO eps(iy)=~/nftot; peps(iy)=~/nftot FOR ALL iy
+ DO eps(iy)=0.5*[eps(iy)+eps(ny-iy)]; peps(iy)=0.5*[peps(iy)+peps(ny-iy)] FOR iy=0 TO ny DIV 2
+ LOOP FOR ALL ix,iz,i WITH plane_dsd(ix,iz,i)
+   uu=~/nftot; vv=~/nftot; ww=~/nftot; uv=~/nftot; uw=~/nftot; vw=~/nftot
+ REPEAT
+END IF
+
+DO meanvel(iy)=~/nftot FOR iy=-1 TO ny+1
+deriv(meanvel, dUdy)
+LeftLUDivStep2(dUdy, D0mat)
+
+DO WITH mean(iy): u=~/nftot; v=~/nftot; w=~/nftot FOR ALL iy
+avfru=~/nftot; avfrw=~/nftot
+
+DO WITH rms(iy): uu=SQRT{uu/nftot-mean(iy).u^2}; vv=SQRT{vv/nftot}; ww=SQRT{ww/nftot-mean(iy).w^2}; uv=uv/nftot; uw=uw/nftot-(mean(iy).u*mean(iy).w); vw=vw/nftot FOR iy =0 TO HI
+
+WITH rms(-1): uu=SQRT{uu/nftot-avfru^2};  ww=SQRT{ww/nftot-avfrw^2}; uw=uw/nftot-avfru*avfrw
+
+LOOP FOR ALL ix,iz,i WITH plane_psd(ix,iz,i):
+ uu=~/nftot; vv=~/nftot; ww=~/nftot 
+REPEAT LOOP
+
+LOOP FOR i=1 TO maxquote
+
+ plane_psd(0,0,i).uu=0
+ plane_psd(0,0,i).ww=0
+
+ DO x_psd(ix,i).uu=beta0*{SUM plane_psd(ix,iz,i).uu FOR ALL iz} FOR ALL ix
+ DO x_psd(ix,i).vv=beta0*{SUM plane_psd(ix,iz,i).vv FOR ALL iz} FOR ALL ix
+ DO x_psd(ix,i).ww=beta0*{SUM plane_psd(ix,iz,i).ww FOR ALL iz} FOR ALL ix 
+
+ DO z_psd(iz,i).uu=alfa0*{plane_psd(0,iz,i).uu +2*[SUM plane_psd(ix,iz,i).uu FOR ix=1 TO nx]} FOR ALL iz 
+ DO z_psd(iz,i).vv=alfa0*{plane_psd(0,iz,i).vv +2*[SUM plane_psd(ix,iz,i).vv FOR ix=1 TO nx]} FOR ALL iz 
+ DO z_psd(iz,i).ww=alfa0*{plane_psd(0,iz,i).ww +2*[SUM plane_psd(ix,iz,i).ww FOR ix=1 TO nx]} FOR ALL iz
+
+REPEAT LOOP 
+
+!ARRAY(0..5) OF CHAR str; ASK str
+uc=MAX(mean.u); ut=SQRT[ni*(SUM d140(i)*mean.u(1+i) FOR ALL i)]
+uc2=uc*uc;ut2=ut*ut
+FILE out=CREATE("info.dat")
+WRITE BY NAME TO out uc,ut,ut/ni
+CLOSE out
+
+IF flag_eps=1 THEN
+ FILE out=CREATE('eps.dat')
+ DO WRITE TO out y(iy),y(iy)*ut/ni,eps(iy),peps(iy),eps(iy)/ut^4*ni,peps(iy)/ut^4*ni FOR iy=0 TO ny DIV 2
+ CLOSE out
+END IF
+
+FILE out=CREATE("mean.dat")
+DO WITH mean(iy): 
+	WRITE TO out y(iy),y(iy)*ut/ni,u,w,u/uc,w/uc,u/ut,w/ut FOR iy=0 TO ny DIV 2
+CLOSE out
+
+FILE out=CREATE("rms.dat")
+DO WITH rms(iy): 
+	WRITE TO out y(iy),y(iy)*ut/ni,uu,vv,ww,uv,uw,vw,uu/ut,vv/ut,ww/ut,uv/ut,uw/ut,vw/ut,ni*(dUdy(iy)-dUdy(ny-iy))/2 FOR iy=0 TO ny DIV 2
+CLOSE out
+
+ARRAY(0..20) OF CHAR file_name
+LOOP quote FOR i=1 TO maxquote
+
+ file_name=WRITE("plane_psd"quota(i)".dat")
+ FILE out=CREATE(file_name)
+ LOOP FOR ALL ix
+   DO WITH plane_psd(ix,iz,i): WRITE TO out alfa0*ix,beta0*iz,alfa0*ix*ni/ut,beta0*iz*ni/ut,uu,vv,ww,uu/uc2,vv/uc2,ww/uc2,uu/ut2,vv/ut2,ww/ut2 FOR ALL iz
+   WRITE TO out
+ REPEAT LOOP
+ CLOSE out 
+
+ IF flag_eps=1 THEN
+   file_name=WRITE("plane_dsd"quota(i)".dat")
+   FILE out=CREATE(file_name)
+   LOOP FOR ALL ix
+     DO WITH plane_dsd(ix,iz,i): WRITE TO out alfa0*ix,beta0*iz,alfa0*ix*ut/ni,beta0*iz*ut/ni,uu,vv,ww,uv,uw,vw FOR ALL iz
+     WRITE TO out
+   REPEAT LOOP
+   CLOSE out
+ END IF
+
+
+ file_name=WRITE("x_psd"quota(i)".dat")
+ FILE out=CREATE(file_name)
+ DO WITH x_psd(ix,i): WRITE TO out alfa0*ix,alfa0*ix*ni/ut,uu,vv,ww,uu/uc2,vv/uc2,ww/uc2,uu/ut2,vv/ut2,ww/ut2 FOR ALL ix
+ CLOSE out
+
+ file_name=WRITE("z_psd"quota(i)".dat")
+ FILE out=CREATE(file_name)
+ DO WRITE TO out beta0*iz,beta0*iz*ni/ut,[z_psd(iz,i).uu+z_psd(-iz,i).uu],[z_psd(iz,i).vv+z_psd(-iz,i).vv],
+ [z_psd(iz,i).ww+z_psd(-iz,i).ww],[z_psd(iz,i).uu+z_psd(-iz,i).uu]/uc2,[z_psd(iz,i).vv+z_psd(-iz,i).vv]/uc2,
+ [z_psd(iz,i).ww+z_psd(-iz,i).ww]/uc2,[z_psd(iz,i).uu+z_psd(-iz,i).uu]/ut2,[z_psd(iz,i).vv+z_psd(-iz,i).vv]/ut2,
+ [z_psd(iz,i).ww+z_psd(-iz,i).ww]/ut2 FOR iz=0 TO nz  
+ CLOSE out	
+
+ LOOP FOR ix=0 TO nx
+   plane_cor(ix,0..nz,i).u.REAL=plane_psd(ix,0..nz,i).uu
+   plane_cor(ix,0..nz,i).v.REAL=plane_psd(ix,0..nz,i).vv
+   plane_cor(ix,0..nz,i).w.REAL=plane_psd(ix,0..nz,i).ww
+   plane_cor(ix,nzd+(-nz..-1),i).u.REAL=plane_psd(ix,-nz..-1,i).uu
+   plane_cor(ix,nzd+(-nz..-1),i).v.REAL=plane_psd(ix,-nz..-1,i).vv
+   plane_cor(ix,nzd+(-nz..-1),i).w.REAL=plane_psd(ix,-nz..-1,i).ww
+ REPEAT LOOP
+ DO WITH plane_cor(ix,*,i): IFT(u); IFT(v); IFT(w) FOR ALL ix
+ DO WITH plane_cor(*,iz,i): RFT(u); RFT(v); RFT(w) FOR ALL iz
+
+ LOOP FOR ix=0 TO nx WITH x_cor(ix,i)
+   u.REAL = alfa0*x_psd(ix,i).uu; v.REAL = alfa0*x_psd(ix,i).vv; 
+   w.REAL = alfa0*x_psd(ix,i).ww
+ REPEAT LOOP 
+ WITH x_cor(*,i): RFT(u); RFT(v); RFT(w) 
+
+ LOOP FOR iz=0 TO nz WITH z_cor(iz,i)
+   u.REAL = beta0*z_psd(iz,i).uu; v.REAL = beta0*z_psd(iz,i).vv; 
+   w.REAL = beta0*z_psd(iz,i).ww
+ REPEAT LOOP
+ LOOP FOR iz=-nz TO -1 WITH z_cor(nzd+iz,i)
+   u.REAL = beta0*z_psd(iz,i).uu; v.REAL = beta0*z_psd(iz,i).vv; w.REAL =
+   beta0*z_psd(iz,i).ww
+ REPEAT LOOP 
+ WITH z_cor(*,i): IFT(u); IFT(v); IFT(w)   	
+
+ file_name=WRITE("plane_cor"quota(i)".dat")
+ FILE out=CREATE(file_name)
+ LOOP FOR iz=nzd DIV 2 TO nzd-1
+   DO WRITE TO out ix*[PI/(alfa0*nxd)],(iz-nzd)*[2*PI/(beta0*nzd)],
+                   ix*[PI/(alfa0*nxd)]*ut/ni,(iz-nzd)*[2*PI/(beta0*nzd)]*ut/ni,
+   plane_cor(*,iz,i).u.REALIFIED(ix), plane_cor(*,iz,i).v.REALIFIED(ix),
+   plane_cor(*,iz,i).w.REALIFIED(ix),
+   plane_cor(*,iz,i).u.REALIFIED(ix)/plane_cor(*,0,i).u.REALIFIED(0),
+   plane_cor(*,iz,i).v.REALIFIED(ix)/plane_cor(*,0,i).v.REALIFIED(0),
+   plane_cor(*,iz,i).w.REALIFIED(ix)/plane_cor(*,0,i).w.REALIFIED(0) 
+   FOR ix=0 TO nxd-1 	 
+   WRITE TO out
+ REPEAT LOOP
+ LOOP FOR iz=0 TO nzd DIV 2 -1
+   DO WRITE TO out ix*PI/[alfa0*(nxd-1)],iz*[2*PI/(beta0*nzd)],
+                   ix*PI/[alfa0*(nxd-1)]*ut/ni,iz*[2*PI/(beta0*nzd)]*ut/ni,
+   plane_cor(*,iz,i).u.REALIFIED(ix), plane_cor(*,iz,i).v.REALIFIED(ix),
+   plane_cor(*,iz,i).w.REALIFIED(ix),
+   plane_cor(*,iz,i).u.REALIFIED(ix)/plane_cor(*,0,i).u.REALIFIED(0),
+   plane_cor(*,iz,i).v.REALIFIED(ix)/plane_cor(*,0,i).v.REALIFIED(0),
+   plane_cor(*,iz,i).w.REALIFIED(ix)/plane_cor(*,0,i).w.REALIFIED(0) 
+   FOR ix=0 TO nxd-1 
+   WRITE TO out
+ REPEAT LOOP   
+
+ file_name=WRITE("x_cor"quota(i)".dat")
+ FILE out=CREATE(file_name)
+ dx=PI/(alfa0*nxd)
+ DO WRITE TO out ix*dx,ix*dx*ut/ni, 
+   x_cor(*,i).u.REALIFIED(ix), x_cor(*,i).v.REALIFIED(ix),
+   x_cor(*,i).w.REALIFIED(ix),
+   x_cor(*,i).u.REALIFIED(ix)/x_cor(*,i).u.REALIFIED(0),
+   x_cor(*,i).v.REALIFIED(ix)/x_cor(*,i).v.REALIFIED(0),
+   x_cor(*,i).w.REALIFIED(ix)/x_cor(*,i).w.REALIFIED(0) 
+   FOR ix=x_cor.LO TO x_cor.HI
+ CLOSE out
+
+ file_name=WRITE("z_cor"quota(i)".dat")
+ FILE out=CREATE(file_name)
+ dz=2*PI/(beta0*nzd)
+ DO WRITE TO out iz*dz,iz*dz*ut/ni,
+   z_cor(iz,i).u.REAL,z_cor(iz,i).v.REAL,
+   z_cor(iz,i).w.REAL,
+   z_cor(iz,i).u.REAL/z_cor(0,i).u.REAL,
+   z_cor(iz,i).v.REAL/z_cor(0,i).v.REAL,
+   z_cor(iz,i).w.REAL/z_cor(0,i).w.REAL FOR iz=0 TO (nzd-1) DIV 2  
+ CLOSE out
+
+REPEAT quote  
+STOP

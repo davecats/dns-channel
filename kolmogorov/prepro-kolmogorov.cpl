@@ -1,0 +1,79 @@
+!#define remove_Wmean
+gamma=0.0
+outinterv=0
+USE dnsdata
+USE dnsdirect
+!USE rtchecks
+USE poisson_solver
+
+ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) OF COMPLEX pres
+ARRAY(0..nxd-1,0..nzd-1) OF COMPLEX presd
+ARRAY(0..20) OF CHAR fieldname, outname
+WRITE BY NAME nxd,nzd
+INTEGER nfmin, nfmax, dn
+ASK nfmin, nfmax, dn
+FILE outfile
+ARRAY(-1..ny+1) OF STRUCTURE(REAL U, W, Uy, Wy) Vbar=0
+POINTER TO STORED STRUCTURE(
+  ARRAY(-1..ny+1) OF STRUCTURE(REAL U, W, Uy, Wy) Vbarimage
+  ) meanfield
+
+#ifndef remove_Wmean
+WRITE "WARNING: it is assumed that Vmean.W is zero!"
+#endif
+!---------------------------------------------------------------------------------!
+!--------------------- load time-averaged velocity profiles  ---------------------!
+meanfield=OPEN("mean.bin")
+WITH meanfield: Vbar=Vbarimage; CLOSE(meanfield)
+
+!---------------------------------------------------------------------------------!
+!----------------------- convert field to Andrea's format  -----------------------!
+
+LOOP files FOR n=nfmin TO nfmax BY dn
+  fieldname = WRITE('Field'n'.fld');
+  WRITE '=============> Processing ', fieldname 
+ 
+
+  !----- Read restart file and produce u,v,w -----!
+  diskfield = OPEN(fieldname)
+  WITH diskfield:
+    V(0,0,*).u.REAL=uavimage(miny..maxy)
+    V(0,0,*).w.REAL=wavimage(miny..maxy)
+    LOOP FOR iy = miny TO maxy
+      DO V(ix,iz,iy).v=fieldimage(iy,ix,iz).v   FOR ALL ix,iz EXCEPT ix=0 AND iz=0
+      DO V(ix,iz,iy).u=fieldimage(iy,ix,iz).eta FOR ALL ix,iz EXCEPT ix=0 AND iz=0
+    REPEAT LOOP
+  vetaTOuvw
+  V(0,0,*).u.REAL=uavimage(miny..maxy)
+  V(0,0,*).w.REAL=wavimage(miny..maxy)
+  CLOSE diskfield
+
+  !------ Compute pressure ----------!
+  compute_pressure(V, pres)
+
+  !----- Remove time-average ------!
+  V(0,0,*).u.REAL=~-Vbar.U;
+#ifdef remove_Wmean
+  V(0,0,*).w.REAL=~-Vbar.W;
+#endif
+
+  !------ Convert to physical space and save --------!
+  LOOP FOR iy=0 TO ny
+  Vd=0; presd=0
+    LOOP FOR ix=0 TO nx
+      Vd(ix,0..nz)=V(ix,0..nz,iy)
+      presd(ix,0..nz)=pres(ix,0..nz,iy)
+      Vd(ix,nzd+(-nz..-1))=V(ix,-nz..-1,iy)
+      presd(ix,nzd+(-nz..-1))=pres(ix,-nz..-1,iy)
+      WITH Vd(ix,*): IFT(u); IFT(v); IFT(w)
+      IFT(presd(ix,*))
+    REPEAT
+    DO WITH Vd(*,iz): RFT(u); RFT(v); RFT(w); RFT(presd(*,iz)) FOR ALL iz
+    outname = WRITE('t-'n'-iy-'iy'.bin')
+    outfile = CREATE(outname)
+    LOOP FOR ix=0 TO 2*nxd-1 AND iz=0 TO nzd-1
+         WRITE BINARY TO outfile Vd(*,iz).u.REALIFIED(ix), Vd(*,iz).v.REALIFIED(ix), Vd(*,iz).w.REALIFIED(ix), presd(*,iz).REALIFIED(ix)
+    REPEAT
+    CLOSE outfile
+  REPEAT
+REPEAT files
