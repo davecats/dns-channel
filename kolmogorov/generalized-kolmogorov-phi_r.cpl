@@ -1,0 +1,410 @@
+!USE rtchecks
+USE dnsdata
+USE dnsdirect
+
+!
+! Computes the scale space flux and its divergence, appearing in the generalized Kolmogorov equation specialized for channel flow,
+! as in Marati, Casciola, Piva, JFM 2004, equation 3.4 and following definitions.
+! 
+! This is NOT a parallel version. 
+!
+! An undersampling factor in x and z directions is NOT introduced to reduce the computational time,
+! it is only used when saving data.
+!
+
+
+! Parameters
+INTEGER iyc=15	! Reference y position (min=2, max=ny-2)
+INTEGER nfmin=1, nfmax=2, nftot
+nftot=nfmax-nfmin+1
+ARRAY(0..100) OF CHAR fluxname='phi_r.dat'
+INTEGER us=1	! Undersampling factor in x and z directions 
+
+
+! Definitions
+FLUXVEC = STRUCTURE(REAL xx, yy, zz)
+SCALEFLUX = STRUCTURE(FLUXVEC turb, mean, visc)
+DIVSCALEFLUX = STRUCTURE(REAL turb, mean, visc)
+
+ARRAY(0..nx,-nz..nz) OF SCALEFLUX phi_r=0
+ARRAY(0..nx,-nz..nz) OF DIVSCALEFLUX div_phi_r=0
+
+ARRAY(iyc-2..iyc+2,0..nx,-nz..nz) OF REAL scale_energy=0
+
+POINTER TO STORED STRUCTURE[
+	ARRAY(0..nx DIV us,-nz DIV us..nz DIV us) OF SCALEFLUX phi_rimage
+	ARRAY(0..nx DIV us,-nz DIV us..nz DIV us) OF DIVSCALEFLUX div_phi_rimage
+] fluximage
+
+ARRAY(-2..2) OF REAL d1coeff=0, d2coeff=0
+
+ARRAY(0..100) OF CHAR field_name
+FILE runfile=CREATE('run.log')
+
+
+
+! --------------------------------------------------------------------------- !
+SUBROUTINE compute_der
+
+	ARRAY(0..4,0..4) OF REAL matder=0
+	ARRAY(0..4) OF REAL tnder=0
+
+	! Matrix
+	LOOP FOR ir=0 TO 4
+		DO matder(ir,ic) = (y(iyc-2+ic)-y(iyc))^(4-ir) FOR ic=0 TO 4
+	REPEAT
+	LUdecomp matder
+	
+	! 1st derivative
+	d1coeff=0; tnder=0; tnder(3) = 1
+	d1coeff(-2+(*)) = matder \ tnder
+
+	! 2nd derivative
+	d2coeff=0; tnder=0; tnder(2) = 2
+	d2coeff(-2+(*)) = matder \ tnder
+
+END compute_der
+
+
+SUBROUTINE compute_scale_energy
+	
+	scale_energy=0
+	
+	ARRAY(0..nx,-nz..nz) OF VELOCITY Vyc=0, Vry=0
+
+	DO Vyc(ix,iz) = V(ix,iz,iyc) FOR ALL ix,iz; Vyc(0,0)=0
+
+        LOOP FOR iy=iyc-2 TO iyc+2
+		Vry=0; DO Vry(ix,iz) = V(ix,iz,iy) FOR ALL ix,iz; Vry(0,0)=0
+
+                LOOP FOR ix=0 TO nx 
+                        LOOP FOR iz=-nz TO nz 
+                                rx = 2*PI/alfa0*ix/(2*nx+1); rz = 2*PI/beta0*iz/(2*nz+1)
+
+                                LOOP FOR ialfa=1 TO nx AND ibeta=-nz TO nz 
+                                        alfa = alfa0*ialfa; beta = beta0*ibeta
+scale_energy(iy,ix,iz)=~+2*[NORM(Vry(ialfa,ibeta).u)+NORM(Vyc(ialfa,ibeta).u)-2*Vry(ialfa,ibeta).u*CONJG(Vyc(ialfa,ibeta).u)*EXP(I*alfa*rx+I*beta*rz)+
+                       NORM(Vry(ialfa,ibeta).v)+NORM(Vyc(ialfa,ibeta).v)-2*Vry(ialfa,ibeta).v*CONJG(Vyc(ialfa,ibeta).v)*EXP(I*alfa*rx+I*beta*rz)+
+                       NORM(Vry(ialfa,ibeta).w)+NORM(Vyc(ialfa,ibeta).w)-2*Vry(ialfa,ibeta).w*CONJG(Vyc(ialfa,ibeta).w)*EXP(I*alfa*rx+I*beta*rz)].REAL 
+                                REPEAT
+                                LOOP FOR ibeta=-nz TO nz EXCEPT ibeta=0 
+                                        beta = beta0*ibeta
+scale_energy(iy,ix,iz)=~+[NORM(Vry(0,ibeta).u)+NORM(Vyc(0,ibeta).u)-2*Vry(0,ibeta).u*CONJG(Vyc(0,ibeta).u)*EXP(I*beta*rz)+
+                          NORM(Vry(0,ibeta).v)+NORM(Vyc(0,ibeta).v)-2*Vry(0,ibeta).v*CONJG(Vyc(0,ibeta).v)*EXP(I*beta*rz)+
+                          NORM(Vry(0,ibeta).w)+NORM(Vyc(0,ibeta).w)-2*Vry(0,ibeta).w*CONJG(Vyc(0,ibeta).w)*EXP(I*beta*rz)].REAL 
+                                REPEAT
+                        REPEAT
+                REPEAT
+        REPEAT
+
+END compute_scale_energy
+	
+
+SUBROUTINE compute_visc
+
+	! Gradient and laplacian evaluated at ry=0
+	
+	! y derivatives
+	LOOP FOR ALL ix, iz
+		DO phi_r(ix,iz).visc.yy = ~ -2*ni * d1coeff(id)*scale_energy(iyc+id,ix,iz) FOR id=-2 TO 2
+		DO div_phi_r(ix,iz).visc = ~ -2*ni * d2coeff(id)*scale_energy(iyc+id,ix,iz) FOR id=-2 TO 2
+	REPEAT
+
+	! x and z derivatives
+        LOOP FOR ix=0 TO nx 
+        	LOOP FOR iz=-nz TO nz 
+                	rx = 2*PI/alfa0*ix/(2*nx+1); rz = 2*PI/beta0*iz/(2*nz+1)
+
+                        LOOP FOR ialfa=1 TO nx AND ibeta=-nz TO nz WITH V(ialfa,ibeta,iyc) 
+                        	alfa = alfa0*ialfa; beta = beta0*ibeta
+		phi_r(ix,iz).visc.xx = ~ -2*ni * (2*[(-2*I*alfa*NORM(u) - 2*I*alfa*NORM(v) - 2*I*alfa*NORM(w)) * EXP(I*alfa*rx+I*beta*rz)].REAL)
+		phi_r(ix,iz).visc.zz = ~ -2*ni * (2*[(-2*I*beta*NORM(u) - 2*I*beta*NORM(v) - 2*I*beta*NORM(w)) * EXP(I*alfa*rx+I*beta*rz)].REAL)
+		div_phi_r(ix,iz).visc = ~ -2*ni * (2*[(2*alfa^2*NORM(u) + 2*alfa^2*NORM(v) + 2*alfa^2*NORM(w)) * EXP(I*alfa*rx+I*beta*rz)].REAL)
+		div_phi_r(ix,iz).visc = ~ -2*ni * (2*[(2*beta^2*NORM(u) + 2*beta^2*NORM(v) + 2*beta^2*NORM(w)) * EXP(I*alfa*rx+I*beta*rz)].REAL)
+                                REPEAT
+                        LOOP FOR ibeta=-nz TO nz WITH V(0,ibeta,iyc)
+                                alfa = 0; beta = beta0*ibeta
+		phi_r(ix,iz).visc.xx = ~ -2*ni * ([(-2*I*alfa*NORM(u) - 2*I*alfa*NORM(v) - 2*I*alfa*NORM(w)) * EXP(I*alfa*rx+I*beta*rz)].REAL)
+		phi_r(ix,iz).visc.zz = ~ -2*ni * ([(-2*I*beta*NORM(u) - 2*I*beta*NORM(v) - 2*I*beta*NORM(w)) * EXP(I*alfa*rx+I*beta*rz)].REAL)
+		div_phi_r(ix,iz).visc = ~ -2*ni * ([(2*alfa^2*NORM(u) + 2*alfa^2*NORM(v) + 2*alfa^2*NORM(w)) * EXP(I*alfa*rx+I*beta*rz)].REAL)
+		div_phi_r(ix,iz).visc = ~ -2*ni * ([(2*beta^2*NORM(u) + 2*beta^2*NORM(v) + 2*beta^2*NORM(w)) * EXP(I*alfa*rx+I*beta*rz)].REAL)
+                        REPEAT
+                REPEAT
+	REPEAT
+
+END compute_visc
+
+
+SUBROUTINE compute_turb
+	
+
+	REAL d_rx, d_rz	
+	ARRAY(iyc-2..iyc+2,0..nx,-nz..nz) OF FLUXVEC scale_turb=0
+        ARRAY(0..nx,-nz..nz) OF VELOCITY Vyc=0, Vry=0, delta=0
+	ARRAY(0..nxd-1,0..nzd-1) OF VELOCITY deltad=0, tmpturb=0
+	ARRAY(0..nx,-nz..nz) OF REAL tmpder=0
+
+        DO Vyc(ix,iz) = V(ix,iz,iyc) FOR ALL ix, iz; Vyc(0,0)=0
+
+	! Flux 
+        LOOP FOR iy=iyc-2 TO iyc+2
+		Vry=0; DO Vry(ix,iz) = V(ix,iz,iy) FOR ALL ix, iz; Vry(0,0)=0
+
+                LOOP FOR irx=0 TO nx 
+                        LOOP FOR irz=-nz TO nz 
+                                rx = 2*PI/alfa0*irx/(2*nx+1); rz = 2*PI/beta0*irz/(2*nz+1)
+
+				delta=0
+                                LOOP FOR ialfa=0 TO nx
+                                        LOOP FOR ibeta=-nz TO nz WITH delta(ialfa,ibeta)
+                                                alfa=alfa0*ialfa; beta=beta0*ibeta
+						u = Vry(ialfa,ibeta).u*EXP(I*alfa*rx+I*beta*rz) - Vyc(ialfa,ibeta).u
+						v = Vry(ialfa,ibeta).v*EXP(I*alfa*rx+I*beta*rz) - Vyc(ialfa,ibeta).v
+						w = Vry(ialfa,ibeta).w*EXP(I*alfa*rx+I*beta*rz) - Vyc(ialfa,ibeta).w
+                                        REPEAT
+                                REPEAT
+
+                		deltad=0 
+                		LOOP FOR ix=0 TO nx
+					deltad(ix,0..nz) = delta(ix,0..nz) 
+					deltad(ix,nzd+(-nz..-1)) = delta(ix,-nz..-1)
+                		REPEAT 
+                		DO WITH deltad(ix,*): IFT(u); IFT(v); IFT(w) FOR ALL ix
+                		DO WITH deltad(*,iz): RFT(u); RFT(v); RFT(w) FOR ALL iz
+
+				tmpturb=0
+				LOOP FOR ix=0 TO nxd-1 AND iz=0 TO nzd-1 WITH tmpturb(ix,iz) 
+	u.REAL = [deltad(ix,iz).u.REAL^2 + deltad(ix,iz).v.REAL^2 + deltad(ix,iz).w.REAL^2] * deltad(ix,iz).u.REAL 
+	v.REAL = [deltad(ix,iz).u.REAL^2 + deltad(ix,iz).v.REAL^2 + deltad(ix,iz).w.REAL^2] * deltad(ix,iz).v.REAL 
+	w.REAL = [deltad(ix,iz).u.REAL^2 + deltad(ix,iz).v.REAL^2 + deltad(ix,iz).w.REAL^2] * deltad(ix,iz).w.REAL 
+	u.IMAG = [deltad(ix,iz).u.IMAG^2 + deltad(ix,iz).v.IMAG^2 + deltad(ix,iz).w.IMAG^2] * deltad(ix,iz).u.IMAG 
+	v.IMAG = [deltad(ix,iz).u.IMAG^2 + deltad(ix,iz).v.IMAG^2 + deltad(ix,iz).w.IMAG^2] * deltad(ix,iz).v.IMAG 
+	w.IMAG = [deltad(ix,iz).u.IMAG^2 + deltad(ix,iz).v.IMAG^2 + deltad(ix,iz).w.IMAG^2] * deltad(ix,iz).w.IMAG 
+				REPEAT
+
+				LOOP FOR ix=0 TO nxd-1 AND iz=0 TO nzd-1 WITH tmpturb(ix,iz)
+                			scale_turb(iy,irx,irz).xx = ~ + (u.REAL+u.IMAG)/(2*nxd*nzd) 
+                			scale_turb(iy,irx,irz).yy = ~ + (v.REAL+v.IMAG)/(2*nxd*nzd) 
+                			scale_turb(iy,irx,irz).zz = ~ + (w.REAL+w.IMAG)/(2*nxd*nzd) 
+				REPEAT
+			
+                        REPEAT
+                REPEAT
+        REPEAT
+	
+	LOOP FOR ALL ix, iz
+		phi_r(ix,iz).turb.xx = ~ + scale_turb(iyc,ix,iz).xx 
+		phi_r(ix,iz).turb.yy = ~ + scale_turb(iyc,ix,iz).yy 
+		phi_r(ix,iz).turb.zz = ~ + scale_turb(iyc,ix,iz).zz
+	REPEAT
+
+
+	! Divergence of the flux 
+	! d_ry
+	LOOP FOR ix=0 TO nx AND iz=-nz TO nz
+	 	DO div_phi_r(ix,iz).turb = ~ + d1coeff(id)*scale_turb(iyc+id,ix,iz).yy FOR id=-2 TO 2
+	REPEAT
+	! d_rx
+        d_rx = 2*PI/alfa0/(2*nx+1) 
+	tmpder=0
+	LOOP FOR iz=-nz TO nz
+		LOOP FOR ix=1 TO nx-1 
+			tmpder(ix,iz) = [scale_turb(iyc,ix+1,iz).xx - scale_turb(iyc,ix-1,iz).xx] / (2*d_rx) 
+		REPEAT
+		tmpder(0,iz) = [-3/2*scale_turb(iyc,0,iz).xx + 2*scale_turb(iyc,1,iz).xx - 1/2*scale_turb(iyc,2,iz).xx] / d_rx
+		tmpder(nx,iz) = [3/2*scale_turb(iyc,nx,iz).xx - 2*scale_turb(iyc,nx-1,iz).xx + 1/2*scale_turb(iyc,nx-2,iz).xx] / d_rx
+	REPEAT
+	DO div_phi_r(ix,iz).turb = ~ + tmpder(ix,iz) FOR ALL ix,iz
+	! d_rz
+	d_rz = 2*PI/beta0/(2*nz+1)
+	tmpder=0
+	LOOP FOR ix=0 TO nx
+		LOOP FOR iz=-nz+1 TO nz-1
+			tmpder(ix,iz) = [scale_turb(iyc,ix,iz+1).zz - scale_turb(iyc,ix,iz-1).zz] / (2*d_rz) 
+		REPEAT
+		tmpder(ix,-nz) = [-3/2*scale_turb(iyc,ix,-nz).zz + 2*scale_turb(iyc,ix,-nz+1).zz - 1/2*scale_turb(iyc,ix,-nz+2).zz] / d_rz
+		tmpder(ix,nz) = [3/2*scale_turb(iyc,ix,nz).zz - 2*scale_turb(iyc,ix,nz-1).zz + 1/2*scale_turb(iyc,ix,nz-2).zz] / d_rz
+	REPEAT
+	DO div_phi_r(ix,iz).turb = ~ + tmpder(ix,iz) FOR ALL ix,iz
+
+END compute_turb
+
+
+SUBROUTINE compute_mean
+	
+
+	REAL d_rx, d_rz	
+	ARRAY(iyc-2..iyc+2,0..nx,-nz..nz) OF FLUXVEC scale_mean=0
+        ARRAY(0..nx,-nz..nz) OF VELOCITY Vyc=0, Vry=0, delta=0
+	ARRAY(0..nxd-1,0..nzd-1) OF VELOCITY deltad=0, deltamean=0, tmpmean=0
+	ARRAY(0..nx,-nz..nz) OF REAL tmpder=0
+
+
+        DO Vyc(ix,iz) = V(ix,iz,iyc) FOR ALL ix, iz; Vyc(0,0)=0
+
+	! Flux 
+        LOOP FOR iy=iyc-2 TO iyc+2
+		Vry=0; DO Vry(ix,iz) = V(ix,iz,iy) FOR ALL ix, iz; Vry(0,0)=0
+
+		LOOP FOR ix=0 TO nxd-1 AND iz=0 TO nzd-1 WITH deltamean(ix,iz)
+			u.REAL = V(0,0,iy).u.REAL - V(0,0,iyc).u.REAL; u.IMAG = u.REAL
+			v.REAL = V(0,0,iy).v.REAL - V(0,0,iyc).v.REAL; v.IMAG = v.REAL
+			w.REAL = V(0,0,iy).w.REAL - V(0,0,iyc).w.REAL; w.IMAG = w.REAL
+		REPEAT 
+
+                LOOP FOR irx=0 TO nx 
+                        LOOP FOR irz=-nz TO nz 
+                                rx = 2*PI/alfa0*irx/(2*nx+1); rz = 2*PI/beta0*irz/(2*nz+1)
+
+				delta=0
+                                LOOP FOR ialfa=0 TO nx
+                                        LOOP FOR ibeta=-nz TO nz WITH delta(ialfa,ibeta)
+                                                alfa=alfa0*ialfa; beta=beta0*ibeta
+						u = Vry(ialfa,ibeta).u*EXP(I*alfa*rx+I*beta*rz) - Vyc(ialfa,ibeta).u
+						v = Vry(ialfa,ibeta).v*EXP(I*alfa*rx+I*beta*rz) - Vyc(ialfa,ibeta).v
+						w = Vry(ialfa,ibeta).w*EXP(I*alfa*rx+I*beta*rz) - Vyc(ialfa,ibeta).w
+                                        REPEAT
+                                REPEAT
+
+                		deltad=0 
+                		LOOP FOR ix=0 TO nx
+					deltad(ix,0..nz) = delta(ix,0..nz) 
+					deltad(ix,nzd+(-nz..-1)) = delta(ix,-nz..-1)
+                		REPEAT 
+                		DO WITH deltad(ix,*): IFT(u); IFT(v); IFT(w) FOR ALL ix
+                		DO WITH deltad(*,iz): RFT(u); RFT(v); RFT(w) FOR ALL iz
+
+				tmpmean=0
+				LOOP FOR ix=0 TO nxd-1 AND iz=0 TO nzd-1 WITH tmpmean(ix,iz) 
+	u.REAL = [deltad(ix,iz).u.REAL^2 + deltad(ix,iz).v.REAL^2 + deltad(ix,iz).w.REAL^2] * deltamean(ix,iz).u.REAL 
+	v.REAL = [deltad(ix,iz).u.REAL^2 + deltad(ix,iz).v.REAL^2 + deltad(ix,iz).w.REAL^2] * deltamean(ix,iz).v.REAL 
+	w.REAL = [deltad(ix,iz).u.REAL^2 + deltad(ix,iz).v.REAL^2 + deltad(ix,iz).w.REAL^2] * deltamean(ix,iz).w.REAL 
+	u.IMAG = [deltad(ix,iz).u.IMAG^2 + deltad(ix,iz).v.IMAG^2 + deltad(ix,iz).w.IMAG^2] * deltamean(ix,iz).u.IMAG 
+	v.IMAG = [deltad(ix,iz).u.IMAG^2 + deltad(ix,iz).v.IMAG^2 + deltad(ix,iz).w.IMAG^2] * deltamean(ix,iz).v.IMAG 
+	w.IMAG = [deltad(ix,iz).u.IMAG^2 + deltad(ix,iz).v.IMAG^2 + deltad(ix,iz).w.IMAG^2] * deltamean(ix,iz).w.IMAG 
+				REPEAT
+
+				LOOP FOR ix=0 TO nxd-1 AND iz=0 TO nzd-1 WITH tmpmean(ix,iz)
+                			scale_mean(iy,irx,irz).xx = ~ + (u.REAL+u.IMAG)/(2*nxd*nzd) 
+                			scale_mean(iy,irx,irz).yy = ~ + (v.REAL+v.IMAG)/(2*nxd*nzd) 
+                			scale_mean(iy,irx,irz).zz = ~ + (w.REAL+w.IMAG)/(2*nxd*nzd) 
+				REPEAT
+			
+                        REPEAT
+                REPEAT
+        REPEAT
+	
+	LOOP FOR ALL ix, iz
+		phi_r(ix,iz).mean.xx = ~ + scale_mean(iyc,ix,iz).xx 
+		phi_r(ix,iz).mean.yy = ~ + scale_mean(iyc,ix,iz).yy 
+		phi_r(ix,iz).mean.zz = ~ + scale_mean(iyc,ix,iz).zz
+	REPEAT
+
+
+	! Divergence of the flux 
+	LOOP FOR ix=0 TO nx AND iz=-nz TO nz
+	 	DO div_phi_r(ix,iz).mean = ~ + d1coeff(id)*scale_mean(iyc+id,ix,iz).yy FOR id=-2 TO 2
+	REPEAT
+	! d_rx
+        d_rx = 2*PI/alfa0/(2*nx+1) 
+	tmpder=0
+	LOOP FOR iz=-nz TO nz
+		LOOP FOR ix=1 TO nx-1 
+			tmpder(ix,iz) = [scale_mean(iyc,ix+1,iz).xx - scale_mean(iyc,ix-1,iz).xx] / (2*d_rx) 
+		REPEAT
+		tmpder(0,iz) = [-3/2*scale_mean(iyc,0,iz).xx + 2*scale_mean(iyc,1,iz).xx - 1/2*scale_mean(iyc,2,iz).xx] / d_rx
+		tmpder(nx,iz) = [3/2*scale_mean(iyc,nx,iz).xx - 2*scale_mean(iyc,nx-1,iz).xx + 1/2*scale_mean(iyc,nx-2,iz).xx] / d_rx
+	REPEAT
+	DO div_phi_r(ix,iz).mean = ~ + tmpder(ix,iz) FOR ALL ix,iz
+	! d_rz
+	d_rz = 2*PI/beta0/(2*nz+1)
+	tmpder=0
+	LOOP FOR ix=0 TO nx
+		LOOP FOR iz=-nz+1 TO nz-1
+			tmpder(ix,iz) = [scale_mean(iyc,ix,iz+1).zz - scale_mean(iyc,ix,iz-1).zz] / (2*d_rz) 
+		REPEAT
+		tmpder(ix,-nz) = [-3/2*scale_mean(iyc,ix,-nz).zz + 2*scale_mean(iyc,ix,-nz+1).zz - 1/2*scale_mean(iyc,ix,-nz+2).zz] / d_rz
+		tmpder(ix,nz) = [3/2*scale_mean(iyc,ix,nz).zz - 2*scale_mean(iyc,ix,nz-1).zz + 1/2*scale_mean(iyc,ix,nz-2).zz] / d_rz
+	REPEAT
+	DO div_phi_r(ix,iz).mean = ~ + tmpder(ix,iz) FOR ALL ix,iz
+	
+
+
+END compute_mean
+! --------------------------------------------------------------------------- !
+
+
+! Main loop on files
+
+compute_der
+
+LOOP files FOR if=nfmin TO nfmax
+
+	V=0 
+
+        ! Loading data
+        field_name = WRITE("Field"if".fld")
+        WRITE TO runfile "Processing field : ",field_name; FLUSH(runfile)
+        IF NOT first THEN READ FROM prev
+                diskfield=OPEN(field_name)
+                WITH diskfield
+                        V(0,0,*).u.REAL=uavimage(nyl-2..nyh+2)
+                        V(0,0,*).w.REAL=wavimage(nyl-2..nyh+2)
+                        LOOP FOR iy=nyl-2 TO nyh+2
+                                DO V(ix,iz,iy).v=fieldimage(iy,ix,iz).v FOR ALL ix,iz EXCEPT ix=0 AND iz=0
+                                DO V(ix,iz,iy).u=fieldimage(iy,ix,iz).eta FOR ALL ix,iz EXCEPT ix=0 AND iz=0
+                        REPEAT LOOP
+                CLOSE diskfield
+        IF NOT last THEN WRITE TO next
+        vetaTOuvw
+
+
+	WRITE TO runfile "Computing scale energy, ",field_name; FLUSH(runfile)
+	compute_scale_energy
+
+	WRITE TO runfile "Computing viscous terms, ",field_name; FLUSH(runfile)
+	compute_visc
+
+	WRITE TO runfile "Computing turbulent terms, ",field_name; FLUSH(runfile)
+	compute_turb
+
+	WRITE TO runfile "Computing mean terms, ",field_name; FLUSH(runfile)
+	compute_mean
+
+REPEAT files
+
+
+
+! Ensemble averaging
+LOOP FOR ALL ix, iz WITH phi_r(ix,iz) 
+	turb.xx = ~ / nftot; turb.yy = ~ / nftot; turb.zz = ~ / nftot;
+	mean.xx = ~ / nftot; mean.yy = ~ / nftot; mean.zz = ~ / nftot;
+	visc.xx = ~ / nftot; visc.yy = ~ / nftot; visc.zz = ~ / nftot;
+REPEAT
+LOOP FOR ALL ix, iz WITH div_phi_r(ix,iz)
+	turb = ~ / nftot; mean = ~ / nftot; visc = ~ / nftot;
+REPEAT
+
+
+! Saving to disk (with undersampling)
+fluximage=OPEN(fluxname)
+LOOP FOR ix=0 TO nx DIV us 
+	LOOP FOR iz=-nz DIV us TO nz DIV us
+	WITH fluximage:
+		phi_rimage(ix,iz) = phi_r(ix*us,iz*us)
+		div_phi_rimage(ix,iz) = div_phi_r(ix*us,iz*us)
+	REPEAT
+REPEAT
+CLOSE fluximage
+
+CLOSE runfile 
+
+
+
+
+
+
+
+
+
+

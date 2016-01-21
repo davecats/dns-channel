@@ -1,0 +1,72 @@
+DERIVS = STRUCTURE(COMPLEX ux,uy,uz,vx,vy,vz,wx,wy,wz)
+DERPRODS = STRUCTURE(COMPLEX ux2,vx2,wx2,uy2,vy2,wy2,uz2,vz2,wz2)
+
+SUBROUTINE fourier2physical(ARRAY(*,*) OF COMPLEX plane; POINTER TO ARRAY(*,*) OF COMPLEX planed) FOLLOWS
+SUBROUTINE read_field(STRING field_name) FOLLOWS
+SUBROUTINE velocity_gradient(POINTER TO ARRAY(*,*,*) OF DERIVS Vder) FOLLOWS
+SUBROUTINE deriv2(ARRAY(*) OF REAL f0,f2^) FOLLOWS
+
+MODULE convenience
+
+SUBROUTINE fourier2physical(ARRAY(*,*) OF COMPLEX plane; POINTER TO ARRAY(*,*) OF COMPLEX planed)
+  LOOP FOR ix = 0 TO nx
+    planed(ix,0..nz)=plane(ix,0..nz)
+    planed(ix,nzd+(-nz..-1))=plane(ix,-nz..-1)
+    IFT(planed(ix,*))
+  REPEAT LOOP
+  DO RFT(planed(*,iz)) FOR ALL iz
+END fourier2physical
+
+SUBROUTINE read_field(STRING field_name)
+  WRITE "Reading field_file",field_name
+  diskfield=OPEN(field_name)
+  WITH diskfield
+    LOOP FOR iy = nyl-2 TO nyh+2
+      DO V(ix,*,iy).v=fieldimage(iy,ix,*).v; V(ix,*,iy).u=fieldimage(iy,ix,*).eta FOR ALL ix
+    REPEAT LOOP
+    V(0,0,*).u.REAL=uavimage(nyl-2..nyh+2)
+    V(0,0,*).w.REAL=wavimage(nyl-2..nyh+2)
+  CLOSE diskfield
+END read_field
+
+SUBROUTINE velocity_gradient(POINTER TO ARRAY(*,*,*) OF DERIVS Vder)
+  LOOP FOR ix=0 TO nx
+    ialfa = I*alfa0*ix
+    LOOP FOR iz=-nz TO nz WITH Vder(ix,iz,*), V(ix,iz,*)
+      ibeta = I*beta0*iz
+      ux(*)=ialfa*u(*); vx(*)=ialfa*v(*); wx(*)=ialfa*w(*)
+      uz(*)=ibeta*u(*); vz(*)=ibeta*v(*); wz(*)=ibeta*w(*)
+      deriv(u(*).REAL,uy.REAL); deriv(u(*).IMAG,uy.IMAG)
+      deriv(v(*).REAL,vy.REAL); deriv(v(*).IMAG,vy.IMAG)
+      deriv(w(*).REAL,wy.REAL); deriv(w(*).IMAG,wy.IMAG)
+      LeftLUDivStep2(uy.REAL,D0mat); LeftLUDivStep2(uy.IMAG,D0mat)
+      LeftLUDivStep2(vy.REAL,D0mat); LeftLUDivStep2(vy.IMAG,D0mat)
+      LeftLUDivStep2(wy.REAL,D0mat); LeftLUDivStep2(wy.IMAG,D0mat)
+    REPEAT
+    FlushStep2
+  REPEAT
+END velocity_gradient
+
+SUBROUTINE deriv2(ARRAY(*) OF REAL f0,f2^)
+IF first THEN
+  f2(0)=SUM d240(i)*f0(1+i) FOR i=-2 TO 2
+  f2(-1)=SUM d24m1(i)*f0(1+i) FOR i=-2 TO 2
+END IF
+IF last THEN  
+  f2(ny)=SUM d24n(i)*f0(ny-1+i) FOR i=-2 TO 2
+  f2(ny+1)=SUM d24np1(i)*f0(ny-1+i) FOR i=-2 TO 2
+END IF
+DO WITH derivatives(iy) f2(iy) = (SUM d2(i)*f0(iy+i) FOR i=-2 TO 2) FOR iy=nyl TO nyh
+IF first THEN
+  WITH derivatives(1): f2(1)=~-(d0(-1)*f2(0)+d0(-2)*f2(-1))
+  WITH derivatives(2): f2(2)=~-d0(-2)*f2(0)
+END IF
+IF last THEN  
+  WITH derivatives(ny-1): f2(ny-1)=~-(d0(1)*f2(ny)+d0(2)*f2(ny+1))
+  WITH derivatives(ny-2): f2(ny-2)=~-d0(2)*f2(ny)
+END IF
+LeftLUDivStep1(f2,D0mat,f2)
+END deriv2
+
+END convenience
+
