@@ -142,7 +142,7 @@ WITH tkedata: deriv(PHI_TDIFF,TDIFF); LeftLUDivStep2(TDIFF,D0mat); TDIFF=-0.5*~
 ! PDIFF
 WITH tkedata: deriv(PHI_PDIFF,PDIFF); LeftLUDivStep2(PDIFF,D0mat); PDIFF=-~
 ! PROD
-DO WITH rmsdata(iy), meandata(iy): PROD = -uv*Uy-vw*Wy FOR iy = -1 TO ny+1
+DO WITH rmsdata(iy), meandata(iy), tkedata(iy): PROD = -uv*Uy-vw*Wy FOR iy = -1 TO ny+1
 
 ! Write to file
 ! ------------------------------------
