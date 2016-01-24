@@ -1,9 +1,14 @@
 !USE rtchecks
-USE dnsdata
-USE dnsdirect
+outinterv=0
+gamma=0
+USE ../dnsdata
+USE ../dnsdirect
 
+DERIVS = STRUCTURE(COMPLEX ux,uy,uz,vx,vy,vz,wx,wy,wz)
+ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) OF DERIVS Vder=0
 ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) OF COMPLEX pressure=0
-USE poisson_solver_parallel
+
+USE ../energy-box/poisson_solver_parallel
 
 !
 ! Computes the geometric space flux in the generalized Kolmogorov equation specialized for channel flow,
@@ -64,7 +69,7 @@ LOOP files FOR if=nfmin TO nfmax
         ! Pressure field
         IF has_terminal THEN WRITE TO runfile "Computing pressure, field : ", field_name; FLUSH(runfile)
         IF has_terminal THEN WRITE "Computing pressure, field : ", field_name
-        compute_pressure
+        compute_pressure(Vder,pressure)
 
 
 	! ----------------------------------------------------------------------------------------------- !
