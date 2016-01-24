@@ -41,8 +41,6 @@ ASK nfmin,nfmax
 nftot=nfmax-nfmin+1
 
 MEANTERMS = STRUCTURE(REAL U,W,Uy,Wy)
-!DERIVS = STRUCTURE(COMPLEX ux,uy,uz,vx,vy,vz,wx,wy,wz) from convenience.cpl
-!DERPRODS = STRUCTURE(COMPLEX ux2,vx2,wx2,uy2,vy2,wy2,uz2,vz2,wz2) from convenience.cpl
 RMS = STRUCTURE(REAL uu,vv,ww,uv,uw,vw)
 TKETERMS = STRUCTURE(REAL CONV,PROD,PDISS,TDIFF,PDIFF,VDIFF,PHI_TDIFF,PHI_PDIFF,PHI_VDIFF)
 
@@ -74,15 +72,15 @@ DO WITH meandata(iy): U=U/nftot; W=W/nftot; FOR ALL iy
 ! Compute the TKE budget
 ! ------------------------------------
 LOOP fields FOR n=nfmin TO nfmax
+  ! Read field
   STRING field_name = WRITE('Field'n'.fld')
-  read_field(field_name)
-  vetaTOuvw
+  read_field_uvw(field_name)
   ! Compute fluctuating field
   WITH meandata(*),V(0,0,*): u.REAL=~-U; w.REAL=~-W
   ! Compute derivatives
-  velocity_gradient(Vder)
+  ! velocity_gradient(Vder)
   ! Pressure field
-  compute_pressure
+  compute_pressure(Vder,pressure)
   ! Parseval theorem method for RMS and PHI_PDIFF
   LOOP FOR iy=-1 TO ny+1 WITH rmsdata(iy),tkedata(iy):
     LOOP FOR ALL iz EXCEPT iz=0

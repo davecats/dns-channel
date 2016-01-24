@@ -147,12 +147,12 @@ END solve_neumann
 
 
 
-
-SUBROUTINE compute_pressure
+SUBROUTINE compute_pressure(POINTER TO ARRAY(*,*,*) OF DERIVS velder; POINTER TO ARRAY(*,*,*) OF COMPLEX _pressure_)
 !
 ! Solves Poisson's equation for the pressure field (parallel version).
 !
 ! Both input (V) and output (pressure) are ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) and are defined (global) outside this subroutine
+! Velder=grad(V) is also retained as output, since in most postprocessing this is used. 
 !
 ! It is assumed that the spatial average of the pressure is constant = 0
 !
@@ -161,11 +161,14 @@ SUBROUTINE compute_pressure
 ! Dirichelet and Neumann problems for the pressure field are solved wavenumberwise by machine 'first'.
 !
 
-pressure=0
+_pressure_=0
+velder=0
 
 ! Definitions
-!DERIVS=STRUCTURE(COMPLEX ux, uy, uz, vx, vy, vz, wx, wy, wz)
-ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) OF DERIVS velder=0
+
+!DERIVS=STRUCTURE(COMPLEX ux, uy, uz, vx, vy, vz, wx, wy, wz) (declared globally)
+!ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) OF DERIVS velder=0         (declared globally)
+
 ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) OF COMPLEX hp=0
 ARRAY(0..nxd-1,0..nzd-1) OF DERIVS velderd=0
 ARRAY(0..nxd-1,0..nzd-1) OF COMPLEX hpd=0
@@ -252,7 +255,7 @@ END IF
 
 IF NOT first THEN READ BINARY FROM prev pres_first; FLUSH prev
 IF NOT last THEN WRITE BINARY TO next pres_first; FLUSH next
-DO pressure(0,0,iy) = pres_first(iy) FOR iy=nyl-2 TO nyh+2
+DO _pressure_(0,0,iy) = pres_first(iy) FOR iy=nyl-2 TO nyh+2
 
 
 ! __________________ Solving for coefficient (alfa,beta) (Dirichelet problem)
@@ -285,9 +288,10 @@ LOOP FOR ix=0 TO nx AND iz=-nz TO nz EXCEPT ix=0 AND iz=0
 	IF NOT first THEN READ BINARY FROM prev pres_first; FLUSH prev
 	IF NOT last THEN WRITE BINARY TO next pres_first; FLUSH next
 
-	DO pressure(ix,iz,iy) = pres_first(iy) FOR iy=nyl-2 TO nyh+2
+	DO _pressure_(ix,iz,iy) = pres_first(iy) FOR iy=nyl-2 TO nyh+2
 
 REPEAT
 
 END compute_pressure
+
 

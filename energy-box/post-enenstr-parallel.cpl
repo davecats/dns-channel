@@ -1,6 +1,8 @@
 !USE rtchecks
-USE dnsdata
-USE dnsdirect
+gamma=0
+outinterv=0
+USE ../dnsdata
+USE ../dnsdirect
 
 STRING inputpath='Fields/Oscil-inphase/'
 
@@ -74,7 +76,8 @@ ARRAY(0..nxd-1,0..nzd-1) OF VORDERIVS omegaderd=0
 ARRAY(0..nxd-1,0..nzd-1) OF VORDERPRODS omegadercorrd=0
 ARRAY(0..nxd-1,0..nzd-1) OF VORVORVDER oiojVijd=0
 ARRAY(0..nxd-1,0..nzd-1) OF CORRELATION corrd=0
-ARRAY(0..nxd-1,0..nzd-1) OF COMPLEX voxoxd=0, voyoyd=0, vozozd=0, oxwxd=0, oywyd=0, ozwzd=0, oxuxd=0, oyuyd=0, ozuzd=0, voxd=0, vozd=0;#endif
+ARRAY(0..nxd-1,0..nzd-1) OF COMPLEX voxoxd=0, voyoyd=0, vozozd=0, oxwxd=0, oywyd=0, ozwzd=0, oxuxd=0, oyuyd=0, ozuzd=0, voxd=0, vozd=0;
+#endif
 
 ARRAY(nyl-2..nyh+2) OF MEANTERMS phase_meandata=0, meandata=0
 ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) OF DERIVS Vder=0
@@ -135,7 +138,7 @@ WRITE 'check derivatives'
 
     #ifdef tke
     ! PRESSURE FIELD
-    compute_pressure
+    compute_pressure(Vder,pressure)
 WRITE 'check pressure'
 
     ! PARSEVAL THEOREM METHOD FOR RMS AND PRESSURE TRANSPORT
