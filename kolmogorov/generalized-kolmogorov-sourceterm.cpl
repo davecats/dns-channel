@@ -1,6 +1,8 @@
 !USE rtchecks
-USE dnsdata
-USE dnsdirect
+gamma=0
+outinterv=0
+USE ../dnsdata
+USE ../dnsdirect
 
 !
 ! Computes the source term in the generalized Kolmogorov equation specialized for channel flow,
@@ -17,7 +19,7 @@ USE dnsdirect
 INTEGER nfmin=1, nfmax=1, nftot
 nftot=nfmax-nfmin+1
 ARRAY(0..100) OF CHAR outfilename=('source.dat')
-INTEGER us=4	! Undersampling factor in x and z directions
+INTEGER us=2	! Undersampling factor in x and z directions
 
 ! Definitions
 DERIVS = STRUCTURE(COMPLEX ux, uy, uz, vx, vy, vz, wx, wy, wz)
@@ -92,22 +94,24 @@ LOOP files FOR if=nfmin TO nfmax
                 IF has_terminal THEN WRITE TO runfile "Computing production, field : ",field_name, "iy=",iy; FLUSH(runfile)
                 IF has_terminal THEN WRITE "Computing production, field : ",field_name, "iy=",iy
                 LOOP FOR ix=0 TO nx DIV us
+                        rx = 2*PI/alfa0*(ix*us)/(2*nx+1)
                         LOOP FOR iz=-nz DIV us TO nz DIV us
-                                rx = 2*PI/alfa0*(ix*us)/(2*nx+1); rz = 2*PI/beta0*(iz*us)/(2*nz+1)
-
+                                rz = 2*PI/beta0*(iz*us)/(2*nz+1)
                                 LOOP FOR ialfa=1 TO nx AND ibeta=-nz TO nz WITH V(ialfa,ibeta,iy)
-                                        alfa = alfa0*ialfa; beta = beta0*ibeta
-	scale_source(iy,ix,iz).prod = ~ + 2*[ (2 - EXP(I*alfa*rx+I*beta*rz) - EXP(-I*alfa*rx-I*beta*rz)) * u*CONJG(v) ].REAL * -2*dUdy(iy)
-        scale_energy(iy,ix,iz) = ~ + 2*[ (2 - EXP(I*alfa*rx+I*beta*rz) - EXP(-I*alfa*rx-I*beta*rz)) * u*CONJG(u) ].REAL +
-                                     2*[ (2 - EXP(I*alfa*rx+I*beta*rz) - EXP(-I*alfa*rx-I*beta*rz)) * v*CONJG(v) ].REAL +
-                                     2*[ (2 - EXP(I*alfa*rx+I*beta*rz) - EXP(-I*alfa*rx-I*beta*rz)) * w*CONJG(w) ].REAL
+                                        T  = I*alfa0*ialfa*rx+I*beta0*ibeta*rz;
+                                        E  = (2-EXP(T)-EXP(-T))
+	scale_source(iy,ix,iz).prod = ~ + 2*[ E * u*CONJG(v) ].REAL * -2*dUdy(iy)
+        scale_energy(iy,ix,iz) = ~ + 2*[ E * u*CONJG(u) ].REAL +
+                                     2*[ E * v*CONJG(v) ].REAL +
+                                     2*[ E * w*CONJG(w) ].REAL
                                 REPEAT
-                                LOOP FOR ibeta=-nz TO nz WITH V(0,ibeta,iy)
-                                        beta = beta0*ibeta
-        scale_source(iy,ix,iz).prod = ~ + [ (2 - EXP(I*beta*rz) - EXP(-I*beta*rz)) * u*CONJG(v) ].REAL * -2*dUdy(iy)
-        scale_energy(iy,ix,iz) = ~ + [ (2 - EXP(I*beta*rz) - EXP(-I*beta*rz)) * u*CONJG(u) ].REAL +
-                                     [ (2 - EXP(I*beta*rz) - EXP(-I*beta*rz)) * v*CONJG(v) ].REAL +
-                                     [ (2 - EXP(I*beta*rz) - EXP(-I*beta*rz)) * w*CONJG(w) ].REAL
+                                LOOP FOR ibeta=-nz TO nz WITH V(0,ibeta,iy) 
+                                        T = I*beta0*ibeta*rz;
+                                        E = (2-EXP(T)-EXP(-T))
+        scale_source(iy,ix,iz).prod = ~ + [ E * u*CONJG(v) ].REAL * -2*dUdy(iy)
+        scale_energy(iy,ix,iz) = ~ + [ E * u*CONJG(u) ].REAL +
+                                     [ E * v*CONJG(v) ].REAL +
+                                     [ E * w*CONJG(w) ].REAL
                                 REPEAT
                         REPEAT
                 REPEAT
