@@ -42,7 +42,7 @@ nftot=nfmax-nfmin+1
 
 MEANTERMS = STRUCTURE(REAL U,W,Uy,Wy)
 RMS = STRUCTURE(REAL uu,vv,ww,uv,uw,vw)
-TKETERMS = STRUCTURE(REAL CONV,PROD,PDISS,TDIFF,PDIFF,VDIFF,PHI_TDIFF,PHI_PDIFF,PHI_VDIFF)
+TKETERMS = STRUCTURE(REAL PROD,PDISS,TDIFF,PDIFF,VDIFF,PHI_TDIFF,PHI_PDIFF,PHI_VDIFF)
 
 ARRAY(0..nx,-nz..nz,-1..ny+1) OF COMPLEX pressure=0
 ARRAY(0..nx,-nz..nz,-1..ny+1) OF DERIVS Vder=0
@@ -148,19 +148,20 @@ DO WITH rmsdata(iy), meandata(iy), tkedata(iy): PROD = -uv*Uy-vw*Wy FOR iy = -1 
 ! ------------------------------------
 ! TKE
 FILE outfile=CREATE("tke.dat")
-WRITE TO outfile "y","CONV","PROD","PDISS","TDIFF","PDIFF","VDIFF","PHI_TDIFF","PHI_PDIFF","PHI_VDIFF"
-DO WRITE TO outfile y(iy),tkedata(iy) FOR iy=0 TO ny 
+WRITE TO outfile "y","PROD","PDISS","TDIFF","PDIFF","VDIFF","PHI_TDIFF","PHI_PDIFF","PHI_VDIFF"
+DO WITH tkedata(iy): WRITE TO outfile y(iy),PROD,PDISS,TDIFF,PDIFF,VDIFF,PHI_TDIFF,PHI_PDIFF,PHI_VDIFF FOR iy=0 TO ny 
 CLOSE(outfile)
 ! RMS
 FILE outfile=CREATE("rms.dat")
 WRITE TO outfile "y","uu","vv","ww","uv","uw","vw"
-DO WRITE TO outfile y(iy),rmsdata(iy) FOR iy=0 TO ny
+DO WITH rmsdata(iy): WRITE TO outfile y(iy),uu,vv,ww,uv,uw,vw FOR iy=0 TO ny
 CLOSE(outfile)
 ! MEAN
 FILE outfile=CREATE("mean.dat")
 WRITE TO outfile "y","U","W","Uy","Wy"
-DO WRITE TO outfile y(iy),meandata(iy) FOR iy=0 TO ny
+DO WITH meandata(iy): WRITE TO outfile y(iy),U,W,Uy,Wy FOR iy=0 TO ny
 CLOSE(outfile)
+
 ! Be polite and say goodbye
 ! ------------------------------------
 WRITE " "
