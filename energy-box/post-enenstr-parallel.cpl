@@ -143,7 +143,7 @@ WRITE 'check pressure'
 
     ! PARSEVAL THEOREM METHOD FOR RMS AND PRESSURE TRANSPORT
     LOOP FOR iy=nyl-2 TO nyh+2 WITH phase_tkedata(iy)
-      LOOP FOR ALL iz EXCEPT iz=0
+      LOOP FOR ALL iz 
         uu = ~ + (V(0,iz,iy).u | (V(0,iz,iy).u)).REAL
         vv = ~ + (V(0,iz,iy).v | (V(0,iz,iy).v)).REAL
         ww = ~ + (V(0,iz,iy).w | (V(0,iz,iy).w)).REAL
