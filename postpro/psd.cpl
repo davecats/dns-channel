@@ -1,0 +1,58 @@
+!
+! This program computes the power spectral density 
+! and cross spectral density of:
+!
+! (uu, vv, ww, uv, vw, uw)
+!
+! This program IS parallel
+!
+
+gamma=0
+outinterv=0
+USE ../dnsdata
+USE ../dnsdirect
+!USE rtchecks
+USE ../tke/convenience.cpl
+
+! Parameters
+INTEGER nfmin=1,nfmax=30, nftot
+nftot=nfmax-nfmin+1
+
+! Definitions
+SPECTRUM=STRUCTURE(REAL uu,vv,ww,uv,uw,vw)
+
+! Array declarations
+ARRAY(nyl-2..nyh+2,0..nx,-nz..nz) OF SPECTRUM psd=0
+POINTER TO STORED STRUCTURE[
+        ARRAY(-1..ny+1,0..nx,-nz..nz) OF SPECTRUM psd_image
+] psd_file
+
+! Main loop on files
+
+LOOP files FOR n=nfmin TO nfmax
+    ! Read field
+    STRING field_name = WRITE('Field'n'.fld')
+    read_field_parallel(field_name)
+    vetaTOuvw
+    ! Compute PSD and CSD
+    IF has_terminal THEN WRITE "Computing PSD and CSD"
+    LOOP FOR ALL ix,iz,iy WITH psd(iy,ix,iz),V(ix,iz,iy):
+        uu=~+1/alfa0/beta0*NORM[u];  vv=~+1/alfa0/beta0*NORM[v]
+        ww=~+1/alfa0/beta0*NORM[w];  uv=~+1/alfa0/beta0*ABS[v|u]
+        uw=~+1/alfa0/beta0*ABS[w|u]; vw=~+1/alfa0/beta0*ABS[w|v]
+    REPEAT LOOP 
+REPEAT files
+
+! Average
+DO WITH psd(ix,iz,iy): uu=~*ix*iz/nftot; vv=~*ix*iz/nftot; ww=~*ix*iz/nftot; uv=~*ix*iz/nftot; uw=~*ix*iz/nftot; vw=~*ix*iz/nftot; FOR ALL ix,iz,iy
+
+! Save to binary
+IF has_terminal THEN WRITE "Saving to psd.bin"
+IF NOT first THEN READ FROM prev
+	psd_file = OPEN('psd.bin')
+	WITH psd_file: psd_image(miny..maxy) = psd(miny..maxy)
+	CLOSE psd_file
+IF NOT last THEN WRITE TO next
+
+! Be polite and say goodbye
+WRITE "Goodbye, man!"

@@ -2,6 +2,7 @@ DERIVS = STRUCTURE(COMPLEX ux,uy,uz,vx,vy,vz,wx,wy,wz)
 DERPRODS = STRUCTURE(COMPLEX ux2,vx2,wx2,uy2,vy2,wy2,uz2,vz2,wz2)
 
 SUBROUTINE fourier2physical(ARRAY(*,*) OF COMPLEX plane; POINTER TO ARRAY(*,*) OF COMPLEX planed) FOLLOWS
+SUBROUTINE read_field_parallel(STRING field_name) FOLLOWS
 SUBROUTINE read_field(STRING field_name) FOLLOWS
 SUBROUTINE read_field_uvw(STRING field_name) FOLLOWS
 SUBROUTINE velocity_gradient(POINTER TO ARRAY(*,*,*) OF DERIVS Vder) FOLLOWS
@@ -17,6 +18,21 @@ SUBROUTINE fourier2physical(ARRAY(*,*) OF COMPLEX plane; POINTER TO ARRAY(*,*) O
   REPEAT LOOP
   DO RFT(planed(*,iz)) FOR ALL iz
 END fourier2physical
+
+SUBROUTINE read_field_parallel(STRING field_name)
+  IF has_terminal THEN WRITE "Reading field_file",field_name
+  IF NOT first THEN READ FROM prev
+    diskfield=OPEN(field_name)
+    WITH diskfield:
+     V(0,0,*).u.REAL=uavimage(nyl-2..nyh+2)
+     V(0,0,*).w.REAL=wavimage(nyl-2..nyh+2)
+     LOOP FOR iy=nyl-2 TO nyh+2
+        DO V(ix,iz,iy).v=fieldimage(iy,ix,iz).v FOR ALL ix,iz EXCEPT ix=0 AND iz=0
+        DO V(ix,iz,iy).u=fieldimage(iy,ix,iz).eta FOR ALL ix,iz EXCEPT ix=0 AND iz=0
+     REPEAT LOOP
+     CLOSE diskfield
+     IF NOT last THEN WRITE TO next
+END read_field_parallel
 
 SUBROUTINE read_field(STRING field_name)
   WRITE "Reading field_file",field_name
