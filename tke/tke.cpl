@@ -13,9 +13,9 @@
 ! *-terms can be summed into the PDISS=nu*<duj/dxi*duj*dxi>
 !
 ! which in a statistically stationary and fully-developed turbulent
-! channel flow reduces to
+! channel flow with spanwise wall oscillations reduces to
 !
-! PROD  --> -<uv>dU/dy                   [this is computed after the fields loop]
+! PROD  --> -<uv>dU/dy-<vw>dW/dy         [this is computed after the fields loop]
 ! PDISS --> nu*<dui/dxj*dui/dxj>    
 ! TDIFF --> -0.5*d/dy(<vuu>+<vvv>+<vww>)   
 ! PDIFF --> -d/dy<vp>              
@@ -83,23 +83,15 @@ LOOP fields FOR n=nfmin TO nfmax
   compute_pressure(Vder,pressure)
   ! Parseval theorem method for RMS and PHI_PDIFF
   LOOP FOR iy=-1 TO ny+1 WITH rmsdata(iy),tkedata(iy):
-    LOOP FOR ALL iz EXCEPT iz=0
-      uu = ~ + (V(0,iz,iy).u | (V(0,iz,iy).u)).REAL
-      vv = ~ + (V(0,iz,iy).v | (V(0,iz,iy).v)).REAL
-      ww = ~ + (V(0,iz,iy).w | (V(0,iz,iy).w)).REAL
-      uv = ~ + (V(0,iz,iy).u | (V(0,iz,iy).v)).REAL
-      uw = ~ + (V(0,iz,iy).u | (V(0,iz,iy).w)).REAL
-      vw = ~ + (V(0,iz,iy).v | (V(0,iz,iy).w)).REAL
-      PHI_PDIFF = ~ + (V(0,iz,iy).v | (pressure(0,iz,iy))).REAL
+    LOOP FOR ALL iz EXCEPT iz=0 WITH V(0,iz,iy):
+      uu = ~ + (u|u).REAL; vv = ~ + (v|v).REAL; ww = ~ + (w|w).REAL
+      uv = ~ + (u|v).REAL; uw = ~ + (u|w).REAL; vw = ~ + (v|w).REAL
+      PHI_PDIFF = ~ + (v|pressure(0,iz,iy)).REAL
     REPEAT
-    LOOP FOR ALL iz AND ix = 1 TO nx
-      uu = ~ + 2 * (V(ix,iz,iy).u | (V(ix,iz,iy).u)).REAL
-      vv = ~ + 2 * (V(ix,iz,iy).v | (V(ix,iz,iy).v)).REAL
-      ww = ~ + 2 * (V(ix,iz,iy).w | (V(ix,iz,iy).w)).REAL
-      uv = ~ + 2 * (V(ix,iz,iy).u | (V(ix,iz,iy).v)).REAL
-      uw = ~ + 2 * (V(ix,iz,iy).u | (V(ix,iz,iy).w)).REAL
-      vw = ~ + 2 * (V(ix,iz,iy).v | (V(ix,iz,iy).w)).REAL
-      PHI_PDIFF = ~ + 2 * (V(ix,iz,iy).v | (pressure(ix,iz,iy))).REAL
+    LOOP FOR ALL iz AND ix = 1 TO nx WITH V(ix,iz,iy):
+      uu = ~ + 2 * (u|u).REAL; vv = ~ + 2 * (v|v).REAL; ww = ~ + 2 * (w|w).REAL
+      uv = ~ + 2 * (u|v).REAL; uw = ~ + 2 * (u|w).REAL; vw = ~ + 2 * (v|w).REAL
+      PHI_PDIFF = ~ + 2 * (v|pressure(ix,iz,iy)).REAL
     REPEAT
   REPEAT
   ! Pseudo-spectral method for PDISS and PHI_TDIFF
