@@ -83,7 +83,7 @@ LOOP fields FOR n=nfmin TO nfmax
   compute_pressure(Vder,pressure)
   ! Parseval theorem method for RMS and PHI_PDIFF
   LOOP FOR iy=-1 TO ny+1 WITH rmsdata(iy),tkedata(iy):
-    LOOP FOR ALL iz EXCEPT iz=0
+    LOOP FOR ALL iz
       uu = ~ + (V(0,iz,iy).u | (V(0,iz,iy).u)).REAL
       vv = ~ + (V(0,iz,iy).v | (V(0,iz,iy).v)).REAL
       ww = ~ + (V(0,iz,iy).w | (V(0,iz,iy).w)).REAL
