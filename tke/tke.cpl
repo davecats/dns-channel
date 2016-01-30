@@ -1,3 +1,6 @@
+! This program computes the MKE and TKE budgets for
+! a channel flow with spanwise wall oscillations
+
 ! 
 ! mean TKE buget according to equation:
 !
@@ -10,7 +13,7 @@
 ! VDIFF1  --> nu*d2K/dxi2
 ! VDIFF2* --> nu*d2/dxjdxi<ui*uj>
 ! 
-! *-terms can be summed into the PDISS=nu*<duj/dxi*duj*dxi>
+! *-terms can be summed into the PDISS=nu*<duj/dxi*duj/dxi>
 !
 ! which in a statistically stationary and fully-developed turbulent
 ! channel flow with spanwise wall oscillations reduces to
@@ -20,10 +23,22 @@
 ! TDIFF --> -0.5*d/dy(<vuu>+<vvv>+<vww>)   
 ! PDIFF --> -d/dy<vp>              
 ! VDIFF --> nu*d2K/dy2                   [this is computed after the fields loop]
-!
-!
+! 
 
-! It is assumed that W=0, which may *NOT* be the case
+! 
+! MKE buget equation, which in a statistically stationary 
+! and fully-developed turbulent channel flow 
+! with spanwise wall oscillations reduces to
+! 
+! MPROD  --> -dP/dx*U = tau_w*U
+! TPROD  --> <uv>dU/dy+<vw>dW/dy         [TKE production, here a sink]
+! TMDIF  --> -d(<uv>U)/dy-d(<vw>W)/dy
+! MMDIF  --> +d(U*Uy)/dy+d(W*Wy)/dy 
+! DISSu  --> ni*dUdy^2
+! DISSw  --> ni*dWdy^2
+! 
+! all these term can be computed after the fields loop.
+
 ! This code is NOT parallel
 
 gamma=0
@@ -40,9 +55,10 @@ INTEGER nfmin,nfmax
 ASK nfmin,nfmax
 nftot=nfmax-nfmin+1
 
-MEANTERMS = STRUCTURE(REAL U,W,Uy,Wy)
+MEANTERMS = STRUCTURE(REAL U,W,Uy,Wy,Uyy,Wyy)
 RMS = STRUCTURE(REAL uu,vv,ww,uv,uw,vw)
 TKETERMS = STRUCTURE(REAL PROD,PDISS,TDIFF,PDIFF,VDIFF,PHI_TDIFF,PHI_PDIFF,PHI_VDIFF)
+MKETERMS = STRUCTURE(REAL MPROD,TPROD,TMDIF,MMDIF,DISSu,DISSw,PHI_TMDIF,PHI_MMDIF)
 
 ARRAY(0..nx,-nz..nz,-1..ny+1) OF COMPLEX pressure=0
 ARRAY(0..nx,-nz..nz,-1..ny+1) OF DERIVS Vder=0
@@ -54,6 +70,7 @@ ARRAY(0..nxd-1,0..nzd-1) OF COMPLEX PHI_TDIFFd=0
 ARRAY(-1..ny+1) OF MEANTERMS meandata=0
 ARRAY(-1..ny+1) OF RMS rmsdata=0
 ARRAY(-1..ny+1) OF TKETERMS tkedata=0
+ARRAY(-1..ny+1) OF MKETERMS mkedata=0
 
 USE ../energy-box/poisson_solver_parallel
 
@@ -77,8 +94,6 @@ LOOP fields FOR n=nfmin TO nfmax
   read_field_uvw(field_name)
   ! Compute fluctuating field
   WITH meandata(*),V(0,0,*): u.REAL=~-U; w.REAL=~-W
-  ! Compute derivatives
-  ! velocity_gradient(Vder)
   ! Pressure field
   compute_pressure(Vder,pressure)
   ! Parseval theorem method for RMS and PHI_PDIFF
@@ -121,20 +136,32 @@ LOOP fields FOR n=nfmin TO nfmax
     WITH VVderd(0,0), tkedata(iy): PDISS=~+ni*REAL[ux2+uy2+uz2+vx2+vy2+vz2+wx2+wy2+wz2]; PHI_TDIFF=~+PHI_TDIFFd(0,0).REAL    
   REPEAT LOOP
 REPEAT fields
-! Mean derivatives (Uy and Wy)
-WITH meandata: deriv(U, Uy); LeftLUDivStep2(Uy, D0mat)
-WITH meandata: deriv(W, Wy); LeftLUDivStep2(Wy, D0mat)
-! Average RMS, PHI_TDIFF, PHI_PDIFF and PDISS
+! Mean derivatives (Uy,Wy,Uyy,Wyy)
+WITH meandata: deriv(U, Uy);     LeftLUDivStep2(Uy, D0mat)
+WITH meandata: deriv(W, Wy);     LeftLUDivStep2(Wy, D0mat)
+WITH meandata: deriv2(U, Uyy);   LeftLUDivStep2(Uyy, D0mat)
+WITH meandata: deriv2(W, Wyy);   LeftLUDivStep2(Wyy, D0mat)
+! Average RMS, PHI_TDIFF, PHI_PDIFF and PDISS(TKE)
 WITH tkedata,rmsdata: uu=~/nftot; vv=~/nftot; ww=~/nftot; uv=~/nftot; uw=~/nftot; vw=~/nftot; PHI_TDIFF=~/nftot; PHI_PDIFF=~/nftot; PDISS=~/nftot
-! VDIFF
+! VDIFF(TKE)
 WITH tkedata, rmsdata: deriv(0.5*(uu + vv + ww),PHI_VDIFF); LeftLUDivStep2(PHI_VDIFF,D0mat);
 WITH tkedata, rmsdata: deriv(PHI_VDIFF,VDIFF);              LeftLUDivStep2(VDIFF,D0mat);     VDIFF=~*ni
-! TDIFF
+! TDIFF(TKE)
 WITH tkedata: deriv(PHI_TDIFF,TDIFF); LeftLUDivStep2(TDIFF,D0mat); TDIFF=-0.5*~
-! PDIFF
+! PDIFF(TKE)
 WITH tkedata: deriv(PHI_PDIFF,PDIFF); LeftLUDivStep2(PDIFF,D0mat); PDIFF=-~
-! PROD
-DO WITH rmsdata(iy), meandata(iy), tkedata(iy): PROD = -uv*Uy-vw*Wy FOR iy = -1 TO ny+1
+! PROD(TKE) and TPROD(MKE)
+DO WITH rmsdata(iy), meandata(iy), tkedata(iy), mkedata(iy): PROD=-uv*Uy-vw*Wy TPROD=-PROD; FOR iy =-1 TO ny+1
+! DISSu(MKE) and DISSw(MKE)
+DO WITH meandata(iy), mkedata(iy): DISSu=ni*Uy^2; DISSw=ni*Wy^2; FOR iy =-1 TO ny+1
+! TMDIF(MKE)
+DO WITH meandata(iy), rmsdata(iy), mkedata(iy): PHI_TMDIF=-uv*U-vw*W FOR iy=-1 TO ny+1
+WITH mkedata: deriv(PHI_TMDIF,TMDIF);  LeftLUDivStep2(TMDIF,D0mat);
+! MMDIF(MKE)
+DO WITH meandata(iy), mkedata(iy): PHI_MMDIF=U*Uy+W*Wy FOR iy=-1 TO ny+1
+WITH mkedata: deriv(PHI_MMDIF,MMDIF);  LeftLUDivStep2(MMDIF,D0mat);
+! MPROD(MKE)
+WITH mkedata,meandata: MPROD=0.5*(Uy(0)+Uy(ny))*U
 
 ! Write to file
 ! ------------------------------------
@@ -143,6 +170,11 @@ FILE outfile=CREATE("tke.dat")
 WRITE TO outfile "y","PROD","PDISS","TDIFF","PDIFF","VDIFF","PHI_TDIFF","PHI_PDIFF","PHI_VDIFF"
 DO WITH tkedata(iy): WRITE TO outfile y(iy),PROD,PDISS,TDIFF,PDIFF,VDIFF,PHI_TDIFF,PHI_PDIFF,PHI_VDIFF FOR iy=0 TO ny 
 CLOSE(outfile)
+! MKE
+FILE outfile=CREATE("mke.dat")
+WRITE TO outfile "y","MPROD","TPROD","TMDIF","MMDIF","DISSu","DISSw","PHI_TMDIF","PHI_MMDIF"
+DO WITH mkedata(iy): WRITE TO outfile y(iy),MPROD,TPROD,TMDIF,MMDIF,DISSu,DISSw,PHI_TMDIF,PHI_MMDIF FOR iy=0 TO ny 
+CLOSE(outfile)
 ! RMS
 FILE outfile=CREATE("rms.dat")
 WRITE TO outfile "y","uu","vv","ww","uv","uw","vw"
@@ -150,8 +182,8 @@ DO WITH rmsdata(iy): WRITE TO outfile y(iy),uu,vv,ww,uv,uw,vw FOR iy=0 TO ny
 CLOSE(outfile)
 ! MEAN
 FILE outfile=CREATE("mean.dat")
-WRITE TO outfile "y","U","W","Uy","Wy"
-DO WITH meandata(iy): WRITE TO outfile y(iy),U,W,Uy,Wy FOR iy=0 TO ny
+WRITE TO outfile "y","U","W","Uy","Wy","Uyy","Wyy"
+DO WITH meandata(iy): WRITE TO outfile y(iy),U,W,Uy,Wy,Uyy,Wyy FOR iy=0 TO ny
 CLOSE(outfile)
 
 ! Be polite and say goodbye
