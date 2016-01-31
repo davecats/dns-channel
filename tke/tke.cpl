@@ -33,7 +33,7 @@
 ! MPROD  --> -dP/dx*U = tau_w*U
 ! TPROD  --> <uv>dU/dy+<vw>dW/dy         [TKE production, here a sink]
 ! TMDIF  --> -d(<uv>U)/dy-d(<vw>W)/dy
-! MMDIF  --> +d(U*Uy)/dy+d(W*Wy)/dy 
+! MMDIF  --> ni*d(U*Uy)/dy+d(W*Wy)/dy 
 ! DISSu  --> ni*dUdy^2
 ! DISSw  --> ni*dWdy^2
 ! 
