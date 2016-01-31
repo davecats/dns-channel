@@ -153,15 +153,15 @@ WITH tkedata: deriv(PHI_PDIFF,PDIFF); LeftLUDivStep2(PDIFF,D0mat); PDIFF=-~
 ! PROD(TKE) and TPROD(MKE)
 DO WITH rmsdata(iy), meandata(iy), tkedata(iy), mkedata(iy): PROD=-uv*Uy-vw*Wy TPROD=-PROD; FOR iy =-1 TO ny+1
 ! DISSu(MKE) and DISSw(MKE)
-DO WITH meandata(iy), mkedata(iy): DISSu=ni*Uy^2; DISSw=ni*Wy^2; FOR iy =-1 TO ny+1
+DO WITH meandata(iy), mkedata(iy): DISSu=ni*Uy^2; DISSw=ni*Wy^2 FOR iy =-1 TO ny+1
 ! TMDIF(MKE)
 DO WITH meandata(iy), rmsdata(iy), mkedata(iy): PHI_TMDIF=-uv*U-vw*W FOR iy=-1 TO ny+1
 WITH mkedata: deriv(PHI_TMDIF,TMDIF);  LeftLUDivStep2(TMDIF,D0mat);
 ! MMDIF(MKE)
 DO WITH meandata(iy), mkedata(iy): PHI_MMDIF=U*Uy+W*Wy FOR iy=-1 TO ny+1
-WITH mkedata: deriv(PHI_MMDIF,MMDIF);  LeftLUDivStep2(MMDIF,D0mat);
+WITH mkedata: deriv(PHI_MMDIF,MMDIF);  LeftLUDivStep2(MMDIF,D0mat);  MMDIF=~*ni
 ! MPROD(MKE)
-WITH mkedata,meandata: MPROD=0.5*(Uy(0)+Uy(ny))*U
+WITH mkedata,meandata: MPROD=0.5*(Uy(0)-Uy(ny))*U
 
 ! Write to file
 ! ------------------------------------
