@@ -11,7 +11,7 @@
 #
 
 # Inputs
-pl = 'uu'
+pl = 'uv'
 py = 10;
 utau = 1;
 nu = 200;
@@ -25,39 +25,49 @@ iz = lambda i: i+nz
 SPECTRUM = np.dtype([('uu', np.float64), ('vv', np.float64), ('ww', np.float64),
                      ('uv', np.float64), ('uw', np.float64), ('vw', np.float64)])
 
-# Read spectra
-with open ('psd.bin','r') as psd_file:
-  psd = np.fromfile(psd_file,SPECTRUM)
-psd = np.reshape(psd,(ny+3,nx+1,2*nz+1))
-psd = psd[1:ny+2] # throw away iy=-1 and iy=ny+1
+# Load postprocessed PSD, if present
+try:
+    psd = np.load('psd.npy','r')
+    psd_x = np.load('psd_x.npy','r')
+    psd_z = np.load('psd_z.npy','r')
+# Otherwise read results
+except IOError:
+    with open ('psd.bin','r') as psd_file:
+      psd = np.fromfile(psd_file,SPECTRUM)
+    psd = np.reshape(psd,(ny+3,nx+1,2*nz+1))
+    psd = psd[1:ny+2] # throw away iy=-1 and iy=ny+1
 
-# Average top and bottom plane
-for iy in range(int(ny/2)):
-  for uiuj in SPECTRUM.names:
-    psd[iy,:,:][uiuj] = 0.5*(psd[iy,:,:][uiuj]+psd[ny-iy,:,:][uiuj])
-psd = psd[0:int(ny/2)+1,:,:]    
+    # Average top and bottom plane
+    for iy in range(int(ny/2)):
+      for uiuj in SPECTRUM.names:
+        psd[iy,:,:][uiuj] = 0.5*(psd[iy,:,:][uiuj]+psd[ny-iy,:,:][uiuj])
+    psd = psd[0:int(ny/2)+1,:,:]    
     
-# Average the two nz half-planes
-for i in range(-nz,0):
-  for uiuj in SPECTRUM.names:
-    psd[:,:,iz(nz)-iz(i)][uiuj] = 0.5*(psd[:,:,iz(i)][uiuj]+psd[:,:,iz(nz)-iz(i)][uiuj])
-psd = psd[:,:,iz(0):iz(nz)+1]
+    # Average the two nz half-planes
+    for i in range(-nz,0):
+      for uiuj in SPECTRUM.names:
+        psd[:,:,iz(nz)-iz(i)][uiuj] = 0.5*(psd[:,:,iz(i)][uiuj]+psd[:,:,iz(nz)-iz(i)][uiuj])
+    psd = psd[:,:,iz(0):iz(nz)+1]
   
-# Compute 1D spectra
-psd_x = np.zeros((int(ny/2)+1,nx+1),SPECTRUM)
-psd_z = np.zeros((int(ny/2)+1,nz+1),SPECTRUM)
-for uiuj in SPECTRUM.names:
-  psd_x[:,:][uiuj] = beta0*np.sum(psd[:,:,:][uiuj],2)
-  psd_z[:,:][uiuj] = alfa0*np.sum(psd[:,:,:][uiuj],1)
+    # Compute 1D spectra
+    psd_x = np.zeros((int(ny/2)+1,nx+1),SPECTRUM)
+    psd_z = np.zeros((int(ny/2)+1,nz+1),SPECTRUM)
+    for uiuj in SPECTRUM.names:
+      psd_x[:,:][uiuj] = beta0*np.sum(psd[:,:,:][uiuj],2)
+      psd_z[:,:][uiuj] = alfa0*np.sum(psd[:,:,:][uiuj],1)
 
-# Premultiply spectra
-for uiuj in SPECTRUM.names:
-  for ix in range(0,nx+1):
-    psd_x[:,ix][uiuj] = kx[ix]*psd_x[:,ix][uiuj]
-    psd[:,ix,:][uiuj] = kx[ix]*psd[:,ix,:][uiuj]
-  for iz in range(0,nz+1):
-    psd_z[:,iz][uiuj] = kz[iz]*psd_z[:,iz][uiuj]
-    psd[:,:,iz][uiuj] = kz[iz]*psd[:,:,iz][uiuj]
+    # Premultiply spectra
+    for uiuj in SPECTRUM.names:
+      for ix in range(0,nx+1):
+        psd_x[:,ix][uiuj] = kx[ix]*psd_x[:,ix][uiuj]
+        psd[:,ix,:][uiuj] = kx[ix]*psd[:,ix,:][uiuj]
+      for iz in range(0,nz+1):
+        psd_z[:,iz][uiuj] = kz[iz]*psd_z[:,iz][uiuj]
+        psd[:,:,iz][uiuj] = kz[iz]*psd[:,:,iz][uiuj]
+
+    # Save the spectra
+    for outdata in ('psd','psd_x','psd_z'):
+      np.save(outdata,eval(outdata)) 
       
 # Plot 2D spectra
 plt.figure()
@@ -69,10 +79,10 @@ plt.xlabel('$k_x h$'); plt.ylabel('$k_z h$'); plt.title(pl+' power spectrum at h
 plt.figure()
 plt.contourf(2*pi/kx[1:nx+1],y[1:int(ny/2)+1],psd_x[1:int(ny/2)+1,1:nx+1][pl])
 plt.xscale('log'); plt.yscale('log')
-plt.xlabel('$y/ h$'); plt.ylabel('$k_x h$'); plt.title(pl+' 1D power spectrum')
+plt.ylabel('$y/ h$'); plt.xlabel('$k_x h$'); plt.title(pl+' 1D power spectrum')
 
 plt.figure()
 plt.contourf(2*pi/kz[1:nz+1],y[1:int(ny/2)+1],psd_z[1:int(ny/2)+1,1:nz+1][pl])
 plt.xscale('log'); plt.yscale('log')
-plt.xlabel('$y/ h$'); plt.ylabel('$k_z h$'); plt.title(pl+' 1D power spectrum')
+plt.ylabel('$y/ h$'); plt.xlabel('$k_z h$'); plt.title(pl+' 1D power spectrum')
 plt.show()
