@@ -16,15 +16,17 @@ USE ../dnsdirect
 !
 
 ! Parameters
-INTEGER nfmin=1, nfmax=1, nftot
-nftot=nfmax-nfmin+1
-ARRAY(0..100) OF CHAR outfilename=('source.dat')
-INTEGER us=2	! Undersampling factor in x and z directions
+! ---------------------------
+nfmin=1 nfmax=1 
+outfilename=('source.dat')
+us=1	! Undersampling factor in x and z directions
+! ---------------------------
+INTEGER nftot=nfmax-nfmin+1
 
 ! Definitions
-DERIVS = STRUCTURE(COMPLEX ux, uy, uz, vx, vy, vz, wx, wy, wz)
-DERPRODS = STRUCTURE(COMPLEX ux2, vx2, wx2, uy2, vy2, wy2, uz2, vz2, wz2)
-SOURCE = STRUCTURE(REAL prod, dissip)
+! ---------------------------
+!SOURCE = STRUCTURE(REAL prod, dissip)
+SOURCE = STRUCTURE(REAL PROD, DISS)
 
 ARRAY(nyl-2..nyh+2,0..nx DIV us,-nz DIV us..nz DIV us) OF SOURCE scale_source=0
 ARRAY(nyl-2..nyh+2,0..nx DIV us,-nz DIV us..nz DIV us) OF REAL scale_energy=0
@@ -88,32 +90,32 @@ LOOP files FOR if=nfmin TO nfmax
 
 	! ----------------------------------------------------------------------------------------------- !
 	! Source term (update) and scale_energy (update): source = -2<\deltau \deltav> (dU/dy)* - 4<eps*>
-	
+	rx0=2*PI/alfa0*us/(2*nx+1)
+	rz0=2*PI/beta0*us/(2*nz+1)
+	Ialfa0=I*alfa0
+	Ibeta0=I*beta0
+
 	! Production
 	LOOP FOR iy=nyl-2 TO nyh+2
                 IF has_terminal THEN WRITE TO runfile "Computing production, field : ",field_name, "iy=",iy; FLUSH(runfile)
                 IF has_terminal THEN WRITE "Computing production, field : ",field_name, "iy=",iy
-                LOOP FOR ix=0 TO nx DIV us
-                        rx = 2*PI/alfa0*(ix*us)/(2*nx+1)
-                        LOOP FOR iz=-nz DIV us TO nz DIV us
-                                rz = 2*PI/beta0*(iz*us)/(2*nz+1)
-                                LOOP FOR ialfa=1 TO nx AND ibeta=-nz TO nz WITH V(ialfa,ibeta,iy)
-                                        T  = I*alfa0*ialfa*rx+I*beta0*ibeta*rz;
-                                        E  = (2-EXP(T)-EXP(-T))
-	scale_source(iy,ix,iz).prod = ~ + 2*[ E * u*CONJG(v) ].REAL * -2*dUdy(iy)
-        scale_energy(iy,ix,iz) = ~ + 2*[ E * u*CONJG(u) ].REAL +
-                                     2*[ E * v*CONJG(v) ].REAL +
-                                     2*[ E * w*CONJG(w) ].REAL
-                                REPEAT
-                                LOOP FOR ibeta=-nz TO nz WITH V(0,ibeta,iy) 
-                                        T = I*beta0*ibeta*rz;
-                                        E = (2-EXP(T)-EXP(-T))
-        scale_source(iy,ix,iz).prod = ~ + [ E * u*CONJG(v) ].REAL * -2*dUdy(iy)
-        scale_energy(iy,ix,iz) = ~ + [ E * u*CONJG(u) ].REAL +
-                                     [ E * v*CONJG(v) ].REAL +
-                                     [ E * w*CONJG(w) ].REAL
-                                REPEAT
+                LOOP FOR ialfa=0 TO nx 
+                   Ialfa0ialfa=Ialfa0*ialfa
+                   LOOP FOR ibeta=-nz TO nz WITH V(ialfa,ibeta,iy):
+                        Ibeta0ibeta=Ibeta0*ibeta
+			uv=u*CONJG(v); uu=u*CONJG(u); vv=v*CONJG(v); ww=w*CONJG(w)
+                	LOOP FOR ix=0 TO nx DIV us
+                        	E = Ialfa0ialfa*rx0*ix
+                        	LOOP FOR iz=-nz DIV us TO nz DIV us
+                                        E  = ~+Ibeta0ibeta*rz0*iz;
+                                        E  = (2-EXP(E)-EXP(E))
+	scale_source(iy,ix,iz).prod = ~ + 2*[ E * uv ].REAL * -2*dUdy(iy)
+        scale_energy(iy,ix,iz)      = ~ + 2*[ E * uu ].REAL +
+                                          2*[ E * vv ].REAL +
+                                          2*[ E * ww ].REAL
+                                REPEAT      
                         REPEAT
+		   REPEAT
                 REPEAT
         REPEAT
 

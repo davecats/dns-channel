@@ -1,5 +1,6 @@
-! This program computes the MKE and TKE budgets for
-! a channel flow with spanwise wall oscillations
+! This program computes the MKE and TKE budgets 
+! and their volume integrals for a channel flow 
+! with spanwise wall oscillations
 
 ! 
 ! mean TKE buget according to equation:
@@ -37,7 +38,7 @@
 ! DISSu  --> ni*dUdy^2
 ! DISSw  --> ni*dWdy^2
 ! 
-! all these term can be computed after the fields loop.
+! all these terms are computed after the fields loop.
 
 ! This code is NOT parallel
 
@@ -161,19 +162,29 @@ WITH mkedata: deriv(PHI_TMDIF,TMDIF);  LeftLUDivStep2(TMDIF,D0mat);
 DO WITH meandata(iy), mkedata(iy): PHI_MMDIF=U*Uy+W*Wy FOR iy=-1 TO ny+1
 WITH mkedata: deriv(PHI_MMDIF,MMDIF);  LeftLUDivStep2(MMDIF,D0mat);  MMDIF=~*ni
 ! MPROD(MKE)
-WITH mkedata,meandata: MPROD=0.5*(Uy(0)-Uy(ny))*U
+WITH mkedata,meandata: MPROD=0.5*ni*(Uy(0)-Uy(ny))*U
 
-! Write to file
+! Write to ASCII file
 ! ------------------------------------
 ! TKE
 FILE outfile=CREATE("tke.dat")
 WRITE TO outfile "y","PROD","PDISS","TDIFF","PDIFF","VDIFF","PHI_TDIFF","PHI_PDIFF","PHI_VDIFF"
 DO WITH tkedata(iy): WRITE TO outfile y(iy),PROD,PDISS,TDIFF,PDIFF,VDIFF,PHI_TDIFF,PHI_PDIFF,PHI_VDIFF FOR iy=0 TO ny 
 CLOSE(outfile)
+! TKE - integrals
+FILE outfile=CREATE("tkeintegrals.dat")
+WRITE TO outfile "PROD","PDISS","TDIFF","PDIFF","VDIFF"
+WITH tkedata: WRITE TO outfile yintf(PROD),yintf(PDISS),yintf(TDIFF),yintf(PDIFF),yintf(VDIFF)
+CLOSE(outfile)
 ! MKE
 FILE outfile=CREATE("mke.dat")
 WRITE TO outfile "y","MPROD","TPROD","TMDIF","MMDIF","DISSu","DISSw","PHI_TMDIF","PHI_MMDIF"
 DO WITH mkedata(iy): WRITE TO outfile y(iy),MPROD,TPROD,TMDIF,MMDIF,DISSu,DISSw,PHI_TMDIF,PHI_MMDIF FOR iy=0 TO ny 
+CLOSE(outfile)
+! MKE - integrals
+FILE outfile=CREATE("mkeintegrals.dat")
+WRITE TO outfile "MPROD","TPROD","TMDIF","MMDIF","DISSu","DISSw"
+WITH mkedata: WRITE TO outfile yintf(MPROD),yintf(TPROD),yintf(TMDIF),yintf(MMDIF),yintf(DISSu),yintf(DISSw)
 CLOSE(outfile)
 ! RMS
 FILE outfile=CREATE("rms.dat")
@@ -185,6 +196,16 @@ FILE outfile=CREATE("mean.dat")
 WRITE TO outfile "y","U","W","Uy","Wy","Uyy","Wyy"
 DO WITH meandata(iy): WRITE TO outfile y(iy),U,W,Uy,Wy,Uyy,Wyy FOR iy=0 TO ny
 CLOSE(outfile)
+
+! Write to binary file
+! ------------------------------------
+POINTER TO STORED STRUCTURE[
+        ARRAY(-1..ny+1) OF MEANTERMS meandataimage
+        ARRAY(-1..ny+1) OF TKETERMS tkedataimage
+        ARRAY(-1..ny+1) OF MKETERMS mkedataimage
+] tkeimage
+tkeimage = CREATE("tke.bin")
+WITH tkeimage: meandataimage=meandata; tkedataimage=tkedata; mkedataimage=mkedata; CLOSE(tkeimage)
 
 ! Be polite and say goodbye
 ! ------------------------------------

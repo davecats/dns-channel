@@ -1,0 +1,164 @@
+
+! 
+! Computes the source term and the geometric space flux
+! in the generalized Kolmogorov equation specialized 
+! for channel flow, as in Marati, Casciola, Piva, JFM 2004, 
+! equation 3.4 and following definitions.
+ 
+! This program IS parallel 
+
+! In order to reduce the computational time, an undersampling factor 
+! in x and z directions is introduced and the computation of TDISS, MEAN
+! TERMS and scale energy are skipped, as already computed with tke.cpl 
+!
+
+gamma=0
+outinterv=0
+USE ../dnsdata
+USE ../dnsdirect
+USE ../tke/convenience
+
+
+! Parameters
+! -----------------------------
+nfmin=1
+nfmax=1 
+us=1	! Undersampling factor in x and z directions
+! -----------------------------
+INTEGER nftot=nfmax-nfmin+1
+INTEGER nx_us=nx DIV us,nz_us=nz DIV us
+
+! Definitions
+! -----------------------------
+SPACEFLUX = STRUCTURE(REAL TURB, PRES, VISC)
+MEANTERMS = STRUCTURE(REAL U,W,Uy,Wy,Uyy,Wyy) ! tke.cpl
+TKETERMS = STRUCTURE(REAL PROD,PDISS,TDIFF,PDIFF,VDIFF,PHI_TDIFF,PHI_PDIFF,PHI_VDIFF) ! tke.cpl
+MKETERMS = STRUCTURE(REAL MPROD,TPROD,TMDIF,MMDIF,DISSu,DISSw,PHI_TMDIF,PHI_MMDIF) ! tke.cpl
+
+ARRAY(nyl-2..nyh+2,0..nx_us,-nz_us..nz_us) OF REAL scalePROD=0
+ARRAY(nyl-2..nyh+2) OF REAL scaleDISS=0
+ARRAY(nyl-2..nyh+2,0..nx_us,-nz_us..nz_us) OF REAL scaleENER=0
+ARRAY(nyl-2..nyh+2,0..nx_us,-nz_us..nz_us) OF SPACEFLUX phiC=0
+ARRAY(nyl-2..nyh+2) OF MEANTERMS meandata=0
+
+ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) OF COMPLEX pressure=0
+ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) OF DERIVS Vder=0
+
+USE ../energy-box/poisson_solver_parallel
+
+POINTER TO STORED STRUCTURE[
+	ARRAY(-1..ny+1,0..nx_us,-nz_us..nz_us) OF REAL scalePRODimage
+        ARRAY(-1..ny+1) OF REAL scaleDISSimage
+	ARRAY(-1..ny+1,0..nx_us,-nz_us..nz_us) OF REAL scaleENERimage
+] sourceimage
+
+POINTER TO STORED ARRAY(-1..ny+1,0..nx_us,-nz_us..nz_us) OF SPACEFLUX phiCimage
+
+! Load MEANTERMS and TKETERMS
+! ------------------------------
+POINTER TO STORED STRUCTURE[
+        ARRAY(-1..ny+1) OF MEANTERMS meandataimage
+        ARRAY(-1..ny+1) OF TKETERMS tkedataimage
+        ARRAY(-1..ny+1) OF MKETERMS mkedataimage
+] tkeimage
+
+IF NOT first THEN READ FROM prev
+        tkeimage=OPEN("tke.bin")
+        WITH tkeimage: meandata=meandataimage(nyl-2..nyh+2); scaleDISS=tkedataimage(nyl-2..nyh+2).PDISS
+        CLOSE(tkeimage)
+IF NOT last THEN WRITE TO next
+
+! Compute SOURCE and phiC terms
+! -------------------------------
+LOOP files FOR if=nfmin TO nfmax
+        ! Loading data
+        STRING field_name = WRITE("Field"if".fld")
+        read_field_parallel(field_name)  ! XXX V(0,0).u and V(0,0).w are retained (remove it properly?)
+        ! Derivatives and pressure
+        compute_pressure(Vder,pressure)
+        ! scalePROD, scaleENER, phiC.PRES
+	rx0=2*PI/alfa0*us/(2*nx+1)
+	rz0=2*PI/beta0*us/(2*nz+1)
+	Ialfa0=I*alfa0
+	Ibeta0=I*beta0
+        LOOP FOR iy=nyl-2 TO nyh+2 
+                IF has_terminal THEN WRITE "Computing, field : ",field_name, "iy=",iy
+                LOOP FOR ialfa=0 TO nx 
+                   Ialfa0ialfa=Ialfa0*ialfa; c=IF ialfa=0 THEN 1 ELSE 2
+                   LOOP FOR ibeta=-nz TO nz WITH V(ialfa,ibeta,iy):
+                        Ibeta0ibeta=Ibeta0*ibeta
+			uv=v|u; uu=u|u; vv=v|v; ww=w|w; pv=v|pressure(ialfa,ibeta,iy)
+                	LOOP FOR ix=0 TO nx_us
+                        	COMPLEX E = Ialfa0ialfa*rx0*ix
+                        	LOOP FOR iz=-nz_us TO nz_us WITH phiC(iy,ix,iz),meandata(iy):
+                                         E = ~+Ibeta0ibeta*rz0*iz; 
+                                         E = c*(2-EXP(E)-EXP(-E)); 
+	          scalePROD(iy,ix,iz)      = ~ + [ E * uv ].REAL * -2*Uy
+                       PRES                = ~ + [ E * pv ].REAL *  2
+                  scaleENER(iy,ix,iz)      = ~ + [ E * uu ].REAL + [ E * vv ].REAL + [ E * ww ].REAL
+                                REPEAT     
+                        REPEAT
+		   REPEAT
+                REPEAT
+        ! phiC.TURB (pseudo-spectral)
+		LOOP FOR irx=0 TO nx_us
+                        rx = rx0*irx
+			LOOP FOR irz=-nz_us TO nz_us 
+                                WITH VVd(*,*,0): uu=0; vv=0; ww=0; uv=0; 
+                                rz = rz0*irz
+				LOOP FOR ialfa=0 TO nx
+                                        Ialfa0ialfa=Ialfa0*ialfa
+					LOOP FOR ibeta=-nz TO nz WITH V(ialfa,ibeta,iy):
+                                          ibetad = IF ibeta>=0 THEN ibeta ELSE nzd+ibeta
+                                          E    = Ialfa0ialfa*rx/2+I*beta0*ibeta*rz/2
+                                          E_2  =     [EXP(E)-EXP(-E)];
+                                          E_2s = 0.5*[EXP(E)+EXP(-E)]; 
+	                VVd(ialfa,ibetad,0).uu = E_2*u    !du
+                        VVd(ialfa,ibetad,0).vv = E_2*v    !dv
+	                VVd(ialfa,ibetad,0).ww = E_2*w    !dw
+	                VVd(ialfa,ibetad,0).uv = E_2s*v   !vstar
+					REPEAT
+				REPEAT		 						
+                                DO WITH VVd(ix,*,0): IFT(uu); IFT(vv); IFT(ww); IFT(uv) FOR ALL ix
+                                DO WITH VVd(*,iz,0): 
+                                   RFT(uu); RFT(vv); RFT(ww); RFT(uv) 
+                                   DO WITH VVd(ix,iz,0):
+                                     uw.REAL = [uu.REAL*uu.REAL+vv.REAL*vv.REAL+ww.REAL*ww.REAL]*(uv.REAL)
+                                     uw.IMAG = [uu.IMAG*uu.IMAG+vv.IMAG*vv.IMAG+ww.IMAG*ww.IMAG]*(uv.IMAG)
+                                   FOR ALL ix
+                                   WITH VVd(*,iz,0): HFT(uw);
+                                FOR ALL iz
+                                DO WITH VVd(ix,*,0): FFT(uw) FOR ALL ix
+                                WITH phiC(iy,irx,irz),VVd(0,0,0): TURB = uw.REAL;
+			REPEAT
+		REPEAT	
+	REPEAT
+        ! phiC.VISC		
+	DO WITH phiC(*,ix,iz),V(0,0,*): 
+		deriv(scaleENER(*,ix,iz),v.REAL); FlushStep1; LeftLUDivStep2(v.REAL,D0mat); FlushStep2
+		VISC = ~ - ni/2 * v.REAL
+	FOR ix=0 TO nx_us AND iz=-nz_us TO nz_us 
+REPEAT files
+
+! Ensemble averaging
+! ----------------------------
+WITH phiC: scalePROD=~/nftot; scaleENER=~/nftot; PRES=~/nftot; TURB=~/nftot; VISC=~/nftot
+
+! Saving to disk
+! ----------------------------
+IF NOT first THEN READ FROM prev
+	sourceimage=OPEN("source.dat")
+	LOOP FOR iy=miny TO maxy WITH sourceimage:
+		scalePRODimage(iy)=scalePROD(iy)
+                scaleDISSimage(iy)=scaleDISS(iy)
+		scaleENERimage(iy)=scaleENER(iy)
+	REPEAT
+	CLOSE sourceimage
+	phiCimage=OPEN("phiC.dat")
+	LOOP FOR iy=miny TO maxy
+		phiCimage(iy) = phiC(iy)
+	REPEAT
+	CLOSE phiCimage
+IF NOT last THEN WRITE TO next
+
+

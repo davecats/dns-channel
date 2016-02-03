@@ -1,6 +1,8 @@
 !USE rtchecks
-USE dnsdata
-USE dnsdirect
+gamma=0
+outinterv=0
+USE ../dnsdata
+USE ../dnsdirect
 
 !
 ! Computes the scale space flux and its divergence, appearing in the generalized Kolmogorov equation specialized for channel flow,
@@ -15,7 +17,7 @@ USE dnsdirect
 
 ! Parameters
 INTEGER iyc=15	! Reference y position (min=2, max=ny-2)
-INTEGER nfmin=1, nfmax=2, nftot
+INTEGER nfmin=1, nfmax=1, nftot
 nftot=nfmax-nfmin+1
 ARRAY(0..100) OF CHAR fluxname='phi_r.dat'
 INTEGER us=1	! Undersampling factor in x and z directions 

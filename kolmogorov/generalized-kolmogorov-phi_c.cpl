@@ -25,7 +25,7 @@ USE ../energy-box/poisson_solver_parallel
 INTEGER nfmin=1, nfmax=1, nftot
 nftot=nfmax-nfmin+1
 ARRAY(0..100) OF CHAR fluxname='phi_c.dat'
-INTEGER us=4	! Undersampling factor in x and z directions
+INTEGER us=1	! Undersampling factor in x and z directions
 
 ! Definitions
 SPACEFLUX = STRUCTURE(REAL turb, pres, visc)
@@ -71,7 +71,7 @@ LOOP files FOR if=nfmin TO nfmax
         IF has_terminal THEN WRITE "Computing pressure, field : ", field_name
         compute_pressure(Vder,pressure)
 
-
+#ifdef scaaa
 	! ----------------------------------------------------------------------------------------------- !
 	! Scale energy (for this file)
 	LOOP FOR iy=nyl-2 TO nyh+2
@@ -96,7 +96,7 @@ LOOP files FOR if=nfmin TO nfmax
                         REPEAT
                 REPEAT
         REPEAT
-
+#endif
 	! ----------------------------------------------------------------------------------------------- !
 	! Spatial flux phi_c.pres 
 	LOOP FOR iy=nyl-2 TO nyh+2
