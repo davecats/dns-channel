@@ -54,7 +54,7 @@ USE convenience
 ! ------------------------------------
 INTEGER nfmin,nfmax,dn
 ASK nfmin,nfmax,dn
-nftot=[(nfmax-nfmin) DIV 2]+1
+nftot=[(nfmax-nfmin) DIV dn]+1
 
 MEANTERMS = STRUCTURE(REAL U,W,Uy,Wy,Uyy,Wyy)
 RMS = STRUCTURE(REAL uu,vv,ww,uv,uw,vw)
@@ -89,7 +89,7 @@ DO WITH meandata(iy): U=U/nftot; W=W/nftot; FOR ALL iy
 
 ! Compute the TKE budget
 ! ------------------------------------
-LOOP fields FOR n=nfmin TO nfmax
+LOOP fields FOR n=nfmin TO nfmax BY dn
   ! Read field
   STRING field_name = WRITE('Field'n'.fld')
   read_field_uvw(field_name)
