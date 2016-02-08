@@ -52,9 +52,9 @@ USE convenience
 
 ! Definitions
 ! ------------------------------------
-INTEGER nfmin,nfmax
-ASK nfmin,nfmax
-nftot=nfmax-nfmin+1
+INTEGER nfmin,nfmax,dn
+ASK nfmin,nfmax,dn
+nftot=[(nfmax-nfmin) DIV 2]+1
 
 MEANTERMS = STRUCTURE(REAL U,W,Uy,Wy,Uyy,Wyy)
 RMS = STRUCTURE(REAL uu,vv,ww,uv,uw,vw)
@@ -77,7 +77,7 @@ USE ../energy-box/poisson_solver_parallel
 
 ! Compute the average field
 ! ------------------------------------
-LOOP files FOR n=nfmin TO nfmax
+LOOP files FOR n=nfmin TO nfmax BY dn
   STRING field_name = WRITE('Field'n'.fld')
   diskfield=OPEN(field_name)
   WITH diskfield,meandata(*):
