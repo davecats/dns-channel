@@ -145,8 +145,8 @@ WITH meandata: deriv2(W, Wyy);   LeftLUDivStep2(Wyy, D0mat)
 ! Average RMS, PHI_TDIFF, PHI_PDIFF and PDISS(TKE)
 WITH tkedata,rmsdata: uu=~/nftot; vv=~/nftot; ww=~/nftot; uv=~/nftot; uw=~/nftot; vw=~/nftot; PHI_TDIFF=~/nftot; PHI_PDIFF=~/nftot; PDISS=~/nftot
 ! VDIFF(TKE)
-WITH tkedata, rmsdata: deriv(0.5*(uu + vv + ww),PHI_VDIFF); LeftLUDivStep2(PHI_VDIFF,D0mat);
-WITH tkedata, rmsdata: deriv(PHI_VDIFF,VDIFF);              LeftLUDivStep2(VDIFF,D0mat);     VDIFF=~*ni
+WITH tkedata, rmsdata:  deriv(0.5*(uu + vv + ww),PHI_VDIFF); LeftLUDivStep2(PHI_VDIFF,D0mat);
+WITH tkedata, rmsdata: deriv2(0.5*(uu + vv + ww),VDIFF);     LeftLUDivStep2(VDIFF,D0mat);     VDIFF=~*ni
 ! TDIFF(TKE)
 WITH tkedata: deriv(PHI_TDIFF,TDIFF); LeftLUDivStep2(TDIFF,D0mat); TDIFF=-0.5*~
 ! PDIFF(TKE)
