@@ -17,8 +17,8 @@
 
 function dvdy=zentral_diff(data,y,nx,ny,nz)
 
-dvdy=zeros(2*nx+1,2*nz+1,ny+1);
+dvdy=zeros(2*nz+1,2*nx+1,ny+2);
 for iy=2:ny+2
-            dvdy(:,:,iy-1)=(data(:,:,iy+1)-data(:,:,iy-1))/(y(iy+1)-y(iy-1)); 
+            dvdy(:,:,iy)=(data(:,:,iy+1)-data(:,:,iy-1))/(y(iy+1)-y(iy-1)); 
 end
 
