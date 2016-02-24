@@ -10,26 +10,35 @@
 ! In order to reduce the computational time, an undersampling factor 
 ! in x and z directions is introduced and the computation of TDISS, MEAN
 ! TERMS and scale energy are skipped, as already computed with tke.cpl 
-!
+! 
+
+! XXX Check where to remove V(0,0) and where not
+! XXX Some terms (which ones?) are not computed in iy=0 AND iy=ny
 
 gamma=0
 outinterv=0
 USE ../dnsdata
 USE ../dnsdirect
 USE ../tke/convenience
+!USE rtchecks
 
 
 ! Parameters
 ! -----------------------------
 nfmin=1
 nfmax=1 
-us=1	! Undersampling factor in x and z directions
+us=48	! Undersampling factor in x and z directions
 ! -----------------------------
 INTEGER nftot=nfmax-nfmin+1
 INTEGER nx_us=nx DIV us,nz_us=nz DIV us
+REAL dxOus=2*PI*us/[alfa0*(2*nx+1)], dzOus=2*PI*us/[alfa0*(2*nx+1)]
+INLINE INTEGER FUNCTION izd(INTEGER iz)=IF iz>=0 THEN iz ELSE nzd+iz
 
 ! Definitions
 ! -----------------------------
+FLUXVEC = STRUCTURE(REAL xx, yy, zz)
+SCALEFLUX = STRUCTURE(FLUXVEC TURB, MEAN, VISC) ! Divide the three components? Use only needed ones?
+DIVSCALEFLUX = STRUCTURE(REAL TURB, MEAN, VISC) 
 SPACEFLUX = STRUCTURE(REAL TURB, PRES, VISC)
 MEANTERMS = STRUCTURE(REAL U,W,Uy,Wy,Uyy,Wyy) ! tke.cpl
 TKETERMS = STRUCTURE(REAL PROD,PDISS,TDIFF,PDIFF,VDIFF,PHI_TDIFF,PHI_PDIFF,PHI_VDIFF) ! tke.cpl
@@ -39,6 +48,8 @@ ARRAY(nyl-2..nyh+2,0..nx_us,-nz_us..nz_us) OF REAL scalePROD=0
 ARRAY(nyl-2..nyh+2) OF REAL scaleDISS=0
 ARRAY(nyl-2..nyh+2,0..nx_us,-nz_us..nz_us) OF REAL scaleENER=0
 ARRAY(nyl-2..nyh+2,0..nx_us,-nz_us..nz_us) OF SPACEFLUX phiC=0
+ARRAY(nyl-2..nyh+2,0..nx_us,-nz_us..nz_us) OF SCALEFLUX phiR=0
+ARRAY(nyl-2..nyh+2,0..nx_us,-nz_us..nz_us) OF DIVSCALEFLUX DIVphiR=0
 ARRAY(nyl-2..nyh+2) OF MEANTERMS meandata=0
 
 ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) OF COMPLEX pressure=0
@@ -51,6 +62,11 @@ POINTER TO STORED STRUCTURE[
         ARRAY(-1..ny+1) OF REAL scaleDISSimage
 	ARRAY(-1..ny+1,0..nx_us,-nz_us..nz_us) OF REAL scaleENERimage
 ] sourceimage
+
+POINTER TO STORED STRUCTURE[
+	ARRAY(-1..ny+1,0..nx_us,-nz_us..nz_us) OF SCALEFLUX phiRimage
+	ARRAY(-1..ny+1,0..nx_us,-nz_us..nz_us) OF DIVSCALEFLUX DIVphiRimage
+] fluximage
 
 POINTER TO STORED ARRAY(-1..ny+1,0..nx_us,-nz_us..nz_us) OF SPACEFLUX phiCimage
 
@@ -68,7 +84,8 @@ IF NOT first THEN READ FROM prev
         CLOSE(tkeimage)
 IF NOT last THEN WRITE TO next
 
-! Compute SOURCE and phiC terms
+IF has_terminal THEN WRITE "Computing Kolmogorov Equation..."
+! Compute Kolmogorov Equation
 ! -------------------------------
 LOOP files FOR if=nfmin TO nfmax
         ! Loading data
@@ -81,17 +98,16 @@ LOOP files FOR if=nfmin TO nfmax
 	rz0=2*PI/beta0*us/(2*nz+1)
 	Ialfa0=I*alfa0
 	Ibeta0=I*beta0
-        LOOP FOR iy=nyl-2 TO nyh+2 
-                IF has_terminal THEN WRITE "Computing, field : ",field_name, "iy=",iy
+        LOOP planes FOR iy=nyl-2 TO (nyh DIV 2) +2  ! XXX  
+        WRITE iy
                 LOOP FOR ialfa=0 TO nx 
                    Ialfa0ialfa=Ialfa0*ialfa; c=IF ialfa=0 THEN 1 ELSE 2
                    LOOP FOR ibeta=-nz TO nz WITH V(ialfa,ibeta,iy):
                         Ibeta0ibeta=Ibeta0*ibeta
 			uv=v|u; uu=u|u; vv=v|v; ww=w|w; pv=v|pressure(ialfa,ibeta,iy)
                 	LOOP FOR ix=0 TO nx_us
-                        	COMPLEX E = Ialfa0ialfa*rx0*ix
                         	LOOP FOR iz=-nz_us TO nz_us WITH phiC(iy,ix,iz),meandata(iy):
-                                         E = ~+Ibeta0ibeta*rz0*iz; 
+                                         COMPLEX E = Ialfa0ialfa*rx0*ix+Ibeta0ibeta*rz0*iz 
                                          E = c*(2-EXP(E)-EXP(-E)); 
 	          scalePROD(iy,ix,iz)      = ~ + [ E * uv ].REAL * -2*Uy
                        PRES                = ~ + [ E * pv ].REAL *  2
@@ -132,7 +148,96 @@ LOOP files FOR if=nfmin TO nfmax
                                 WITH phiC(iy,irx,irz),VVd(0,0,0): TURB = uw.REAL;
 			REPEAT
 		REPEAT	
-	REPEAT
+        ! scaleENERr, scale_turb and scale_mean
+          IF iy>=nyl AND iy<=nyh THEN
+                Vry==V(ialfa,ibeta,iry)
+                Vyc==V(ialfa,ibeta,iy)
+        	LOOP FOR iry=iy-2 TO iy+2
+#define deltamean(f) (V(0,0,iry).f.REAL - V(0,0,iy).f.REAL)
+                	LOOP FOR irx=0 TO nx_us
+                           LOOP FOR irz=-nz_us TO nz_us 
+                                VVd=0; Vd=0 ! XXX Check here, what should you put to zero? Is the undersampling here correct?
+                                rx = 2*PI/alfa0*(irx*us)/(2*nx+1); rz = 2*PI/beta0*(irz*us)/(2*nz+1)
+                                LOOP FOR ialfa=0 TO nx AND ibeta=-nz TO nz
+                                  ibetad = izd(ibeta)
+                                  alfa = alfa0*ialfa; beta = beta0*ibeta
+                                      Vder(irx,irz,iry).ux.REAL =~+2*[NORM(Vry.u)+NORM(Vyc.u)-2*(Vyc.u|Vry.u)*EXP(I*alfa*rx+I*beta*rz)+
+                                                                      NORM(Vry.v)+NORM(Vyc.v)-2*(Vyc.v|Vry.u)*EXP(I*alfa*rx+I*beta*rz)+
+                                                                      NORM(Vry.w)+NORM(Vyc.w)-2*(Vyc.w|Vry.w)*EXP(I*alfa*rx+I*beta*rz)].REAL   ! scaleENERr
+                                      VVd(ialfa,ibetad,0).uu=Vry.u*EXP(I*alfa*rx+I*beta*rz) - Vyc.u  ! delta_turb.u
+                                      VVd(ialfa,ibetad,0).vv=Vry.v*EXP(I*alfa*rx+I*beta*rz) - Vyc.v  ! delta_turb.v
+                                      VVd(ialfa,ibetad,0).ww=Vry.v*EXP(I*alfa*rx+I*beta*rz) - Vyc.w  ! delta_turb.w
+                                      Vd(ialfa,ibetad).u=Vry.u*EXP(I*alfa*rx+I*beta*rz) - Vyc.u ! delta_mean.u
+                                      Vd(ialfa,ibetad).v=Vry.v*EXP(I*alfa*rx+I*beta*rz) - Vyc.v ! delta_mean.v
+                                      Vd(ialfa,ibetad).w=Vry.w*EXP(I*alfa*rx+I*beta*rz) - Vyc.w ! delta_mean.w
+                                REPEAT
+                                DO WITH VVd(ix,*,0), Vd(ix,*): IFT(uu); IFT(vv); IFT(ww); IFT(u); IFT(v); IFT(w); FOR ALL ix
+                                DO WITH VVd(*,iz,0), Vd(*,iz): 
+                                   RFT(uu); RFT(vv); RFT(ww); RFT(u); RFT(v); RFT(w); 
+				   DO WITH VVd(ix,iz,0),Vd(ix,iz): 
+                                     uvw_r = [uu.REAL^2 + vv.REAL^2 + ww.REAL^2]
+                                     uvw_i = [uu.IMAG^2 + vv.IMAG^2 + ww.IMAG^2]
+	                             VVd(ix,iz,1).uu.REAL = uvw_r * uu.REAL; VVd(ix,iz,1).uu.IMAG = uvw_i * uu.IMAG !deltad_turb.u
+	                             VVd(ix,iz,1).vv.REAL = uvw_r * vv.REAL; VVd(ix,iz,1).vv.IMAG = uvw_i * vv.IMAG !deltad_turb.v
+	                             VVd(ix,iz,1).ww.REAL = uvw_r * ww.REAL; VVd(ix,iz,1).ww.IMAG = uvw_i * ww.IMAG !deltad_turb.w
+                                     VVd(ix,iz,2).uu = [u.REAL^2 + v.REAL^2 + w.REAL^2]*deltamean(u) + I*[u.IMAG^2 + v.IMAG^2 + w.IMAG^2]*deltamean(u) !deltad_mean.u
+                                     VVd(ix,iz,2).vv = [u.REAL^2 + v.REAL^2 + w.REAL^2]*deltamean(v) + I*[u.IMAG^2 + v.IMAG^2 + w.IMAG^2]*deltamean(v) !deltad_mean.v
+                                     VVd(ix,iz,2).ww = [u.REAL^2 + v.REAL^2 + w.REAL^2]*deltamean(w) + I*[u.IMAG^2 + v.IMAG^2 + w.IMAG^2]*deltamean(w) !deltad_mean.w
+				   FOR ALL ix
+                                   DO WITH VVd(*,iz,i): HFT(uu); HFT(vv); HFT(ww) FOR i=1 TO 2
+                                FOR ALL iz
+                                DO WITH VVd(ix,*,1): FFT(uu); FFT(vv); FFT(ww) FOR ALL ix AND i=1 TO 2
+                                WITH Vder(irx,irz,iry): 
+                                                        uy.REAL=VVd(0,0,1).uu.REAL; vy.REAL=VVd(0,0,1).vv.REAL; wy.REAL=VVd(0,0,1).ww.REAL; ! scale_turb(xx,yy,zz)
+                                                        uz.REAL=VVd(0,0,2).uu.REAL; vz.REAL=VVd(0,0,2).vv.REAL; wz.REAL=VVd(0,0,2).ww.REAL; ! scale_mean(xx,yy,zz)
+                           REPEAT  
+                        REPEAT
+                REPEAT
+	        DO 
+                     WITH phiR(iy,ix,iz).TURB, Vder(ix,iz,iy): xx =~+uy.REAL; yy =~+vy.REAL; zz=~+wy.REAL ! scale_turb(xx,yy,zz)
+                     WITH phiR(iy,ix,iz).MEAN, Vder(ix,iz,iy): xx =~+uz.REAL; yy =~+vz.REAL; zz=~+wz.REAL ! scale_mean(xx,yy,zz)
+                FOR ix=0 TO nx_us AND iz=-nz_us TO nz_us 
+        ! derive phiR to compute DIVphiR
+                DO WITH derivs_standalone(iy):
+                ! yr-derivatives
+                         phiR(iy,ix,iz).VISC.yy = ~ -2*ni*D1(Vder(ix,iz,iy+(-2..2)).ux.REAL) ! Vder.ux.REAL==scaleENERr
+                         DIVphiR(iy,ix,iz).VISC = ~ -2*ni*D2(Vder(ix,iz,iy+(-2..2)).ux.REAL) ! Vder.ux.REAL==scaleENERr
+                         DIVphiR(iy,ix,iz).TURB = ~ +D1(Vder(ix,iz,iy+(-2..2)).vy.REAL)      ! Vder(ix,iz,iy+(-2..2)).(u,v,w)y==scale_turb(xx,yy,zz)
+                         DIVphiR(iy,ix,iz).MEAN = ~ +D1(Vder(ix,iz,iy+(-2..2)).vz.REAL)      ! Vder(ix,iz,iy+(-2..2)).(u,v,w)z==scale_mean(xx,yy,zz)
+                ! xr and zr derivatives
+                      rx = 2*PI/alfa0*(ix*us)/(2*nx+1); rz = 2*PI/beta0*(iz*us)/(2*nz+1)
+                      WITH DIVphiR(iy,ix,iz):
+                      IF ix=0 THEN 
+                        TURB=~+[-3/2*Vder(0,iz,iy).uy.REAL + 2*Vder(1,iz,iy).uy.REAL - 1/2*Vder(2,iz,iy).uy.REAL]/dxOus
+			MEAN=~+[-3/2*Vder(0,iz,iy).uz.REAL + 2*Vder(1,iz,iy).uz.REAL - 1/2*Vder(2,iz,iy).uz.REAL]/dxOus
+                      ELSE IF ix=nx_us THEN
+                        TURB=~+[3/2*Vder(nx_us,iz,iy).uy.REAL - 2*Vder(nx_us-1,iz,iy).uy.REAL + 1/2*Vder(nx_us-2,iz,iy).uy.REAL]/dxOus
+                        MEAN=~+[3/2*Vder(nx_us,iz,iy).uz.REAL - 2*Vder(nx_us-1,iz,iy).uz.REAL + 1/2*Vder(nx_us-2,iz,iy).uz.REAL]/dxOus
+                      ELSE
+                        TURB=~+[Vder(ix+1,iz,iy).uy.REAL - Vder(ix-1,iz,iy).uy.REAL]/(2*dxOus) 
+			MEAN=~+[Vder(ix+1,iz,iy).uz.REAL - Vder(ix-1,iz,iy).uz.REAL]/(2*dxOus) 
+                      END IF
+                      IF iz=-nz_us THEN 
+                        TURB=~+[-3/2*Vder(ix,-nz_us,iy).wy.REAL + 2*Vder(ix,-nz_us+1,iy).wy.REAL - 1/2*Vder(ix,-nz_us+2,iy).wy.REAL]/dzOus
+                        MEAN=~+[-3/2*Vder(ix,-nz_us,iy).wz.REAL + 2*Vder(ix,-nz_us+1,iy).wz.REAL - 1/2*Vder(ix,-nz_us+2,iy).wz.REAL]/dzOus
+                      ELSE IF iz=nz_us THEN
+                        TURB=~+[3/2*Vder(ix,nz_us,iy).wy.REAL - 2*Vder(ix,-nz_us-1,iy).wy.REAL + 1/2*Vder(ix,-nz_us-2,iy).wy.REAL]/dzOus
+                        MEAN=~+[3/2*Vder(ix,nz_us,iy).wz.REAL - 2*Vder(ix,-nz_us-1,iy).wz.REAL + 1/2*Vder(ix,-nz_us-2,iy).wz.REAL]/dzOus
+                      ELSE
+                        TURB=~+[Vder(ix,iz+1,iy).wy.REAL - Vder(ix,iz-1,iy).wy.REAL]/(2*dzOus) 
+                        MEAN=~+[Vder(ix,iz+1,iy).wz.REAL - Vder(ix,iz-1,iy).wz.REAL]/(2*dzOus) 
+                      END IF
+                      LOOP FOR ialfa=0 TO nx AND ibeta=-nz TO nz WITH V(ialfa,ibeta,iy):
+                         alfa = alfa0*ialfa; beta = beta0*ibeta
+			 WITH DIVphiR(iy,ix,iz), phiR(iy,ix,iz).VISC:
+		         xx = ~ -2*ni * (2*[(-2*I*alfa*NORM(u) - 2*I*alfa*NORM(v) - 2*I*alfa*NORM(w)) * EXP(I*alfa*rx+I*beta*rz)].REAL)
+		         zz = ~ -2*ni * (2*[(-2*I*beta*NORM(u) - 2*I*beta*NORM(v) - 2*I*beta*NORM(w)) * EXP(I*alfa*rx+I*beta*rz)].REAL)
+		         VISC = ~ -2*ni * (2*[(2*alfa^2*NORM(u) + 2*alfa^2*NORM(v) + 2*alfa^2*NORM(w)) * EXP(I*alfa*rx+I*beta*rz)].REAL +
+		                           2*[(2*beta^2*NORM(u) + 2*beta^2*NORM(v) + 2*beta^2*NORM(w)) * EXP(I*alfa*rx+I*beta*rz)].REAL)
+                      REPEAT
+		FOR ix=0 TO nx_us AND iz=-nz_us TO nz_us
+          END IF 
+        REPEAT planes
         ! phiC.VISC		
 	DO WITH phiC(*,ix,iz),V(0,0,*): 
 		deriv(scaleENER(*,ix,iz),v.REAL); FlushStep1; LeftLUDivStep2(v.REAL,D0mat); FlushStep2
@@ -140,12 +245,18 @@ LOOP files FOR if=nfmin TO nfmax
 	FOR ix=0 TO nx_us AND iz=-nz_us TO nz_us 
 REPEAT files
 
-! Ensemble averaging
+! Ensemble averaging (phiC,scalePROD,scaleENER)
 ! ----------------------------
 WITH phiC: scalePROD=~/nftot; scaleENER=~/nftot; PRES=~/nftot; TURB=~/nftot; VISC=~/nftot
+WITH phiR: 
+           TURB.xx=~/nftot; TURB.yy=~/nftot; TURB.zz=~/nftot; 
+           VISC.xx=~/nftot; VISC.yy=~/nftot; VISC.zz=~/nftot; 
+           MEAN.xx=~/nftot; MEAN.yy=~/nftot; MEAN.zz=~/nftot; 
+WITH DIVphiR: MEAN=~/nftot; TURB=~/nftot; VISC=~/nftot
 
 ! Saving to disk
 ! ----------------------------
+IF has_terminal THEN WRITE "Saving results to disk..."
 IF NOT first THEN READ FROM prev
 	sourceimage=OPEN("source.dat")
 	LOOP FOR iy=miny TO maxy WITH sourceimage:
@@ -159,6 +270,14 @@ IF NOT first THEN READ FROM prev
 		phiCimage(iy) = phiC(iy)
 	REPEAT
 	CLOSE phiCimage
+	fluximage=OPEN("phiR.dat")
+	LOOP FOR iy=miny TO maxy WITH fluximage:
+		phiRimage(iy) = phiR(iy)
+             DIVphiRimage(iy) = DIVphiR(iy)
+	REPEAT
+	CLOSE fluximage
 IF NOT last THEN WRITE TO next
 
-
+! Be polite and say Goodbye
+! ----------------------------
+WRITE "Goodbye, man!"
