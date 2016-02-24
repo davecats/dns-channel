@@ -33,7 +33,7 @@ LOOP files FOR n=nfmin TO nfmax
     ! Read field
     STRING field_name = WRITE('Field'n'.fld')
     read_field_parallel(field_name)
-    vetaTOuvw
+    V(0,0,*)=0
     ! Compute PSD and CSD
     IF has_terminal THEN WRITE "Computing PSD and CSD"
     LOOP FOR ALL ix,iz,iy WITH psd(iy,ix,iz),V(ix,iz,iy):
@@ -44,7 +44,7 @@ LOOP files FOR n=nfmin TO nfmax
 REPEAT files
 
 ! Average
-DO WITH psd(ix,iz,iy): uu=~*ix*iz/nftot; vv=~*ix*iz/nftot; ww=~*ix*iz/nftot; uv=~*ix*iz/nftot; uw=~*ix*iz/nftot; vw=~*ix*iz/nftot; FOR ALL ix,iz,iy
+WITH psd(*,*,*): uu=~/nftot; vv=~/nftot; ww=~/nftot; uv=~/nftot; uw=~/nftot; vw=~/nftot;
 
 ! Save to binary
 IF has_terminal THEN WRITE "Saving to psd.bin"
