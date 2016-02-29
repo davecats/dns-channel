@@ -44,7 +44,7 @@ LOOP files FOR n=nfmin TO nfmax
         dudyn.IMAG=SUM -d14n(i)*V(ix,iz,ny-1+i).u.IMAG FOR i=-2 TO 2
         psd(0,ix,iz)=~+0.5/alfa0/beta0*([dudy0|dudy0]+[dudyn|dudyn]).REAL
         LOOP FOR iy=1 TO ny_2
-            psd(iy,ix,iz)=~+0.5/alfa0/beta0*([dudy0|V(ix,iz,iy).u]+[dudyn||V(ix,iz,ny-iy).u]).REAL
+            psd(iy,ix,iz)=~+0.5/alfa0/beta0*([dudy0|V(ix,iz,iy).u]+[dudyn|V(ix,iz,ny-iy).u]).REAL
         REPEAT LOOP
       REPEAT
     REPEAT
