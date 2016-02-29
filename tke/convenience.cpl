@@ -1,6 +1,23 @@
 DERIVS = STRUCTURE(COMPLEX ux,uy,uz,vx,vy,vz,wx,wy,wz)
 DERPRODS = STRUCTURE(COMPLEX ux2,vx2,wx2,uy2,vy2,wy2,uz2,vz2,wz2)
 
+STRUCTURE[ARRAY(-2..2) OF REAL d1,d2] derivs_standalone(MAX(1,nyl-2)..MIN(ny-1,nyh+2))
+INLINE REAL FUNCTION D1(REAL f(*)) = d1(-2)*f(-2)+d1(-1)*f(-1)+d1(0)*f(0)+d1(1)*f(1)+d1(2)*f(2)
+INLINE REAL FUNCTION D2(REAL f(*)) = d2(-2)*f(-2)+d2(-1)*f(-1)+d2(0)*f(0)+d2(1)*f(1)+d2(2)*f(2)
+INLINE COMPLEX FUNCTION D1(COMPLEX f(*)) = D1(f.REAL)+I*D1(f.IMAG)
+INLINE COMPLEX FUNCTION D2(COMPLEX f(*)) = D2(f.REAL)+I*D2(f.IMAG)
+LOOP FOR iy=MAX(1,nyl-2) TO MIN(ny-1,nyh+2) WITH derivs_standalone(iy):
+  ARRAY(0..4,0..4) OF REAL matder=0
+  ARRAY(0..4) OF REAL tnder=0
+  DO matder(ir,ic) = (y(iy-2+ic)-y(iy))^(4-ir) FOR ic=0 TO 4 AND ir=0 TO 4
+  LUdecomp matder
+  d1=0; tnder=0; tnder(3) = 1
+  d1(-2+(*)) = matder \ tnder
+  d2=0; tnder=0; tnder(2) = 2
+  d2(-2+(*)) = matder \ tnder
+REPEAT
+
+SUBROUTINE ByteSwap(POINTER TO SINGLE xxx) FOLLOWS
 SUBROUTINE fourier2physical(ARRAY(*,*) OF COMPLEX plane; POINTER TO ARRAY(*,*) OF COMPLEX planed) FOLLOWS
 SUBROUTINE read_field_parallel(STRING field_name) FOLLOWS
 SUBROUTINE read_field(STRING field_name) FOLLOWS
@@ -10,6 +27,22 @@ SUBROUTINE deriv2(ARRAY(*) OF REAL f0,f2^) FOLLOWS
 REAL FUNCTION yintf(REAL f(*)) FOLLOWS
 
 MODULE convenience
+
+SUBROUTINE ByteSwap(POINTER TO SINGLE xxx)
+C SECTION
+  register char a;
+  register char * b = (char *) xxx_;
+  register int  i = 0;
+  register int  j = sizeof(*xxx_)-1;
+  while (i<j)
+    {
+     a = b[i];
+     b[i] = b[j];
+     b[j] = a;
+     i++, j--;
+     }
+END C SECTION
+END ByteSwap
 
 SUBROUTINE fourier2physical(ARRAY(*,*) OF COMPLEX plane; POINTER TO ARRAY(*,*) OF COMPLEX planed)
   LOOP FOR ix = 0 TO nx

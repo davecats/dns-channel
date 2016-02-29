@@ -44,7 +44,7 @@
 
 gamma=0
 outinterv=10
-USE rtchecks
+!USE rtchecks
 USE ../dnsdata
 USE ../dnsdirect
 USE convenience
