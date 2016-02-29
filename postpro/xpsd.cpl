@@ -1,0 +1,64 @@
+! 
+! This program computes the 
+! cross spectral density of:
+! 
+! u at the height y(iyP) with u at the heights y(1..iyP) or
+! with du/dy at the wall
+! 
+! This program is ONLY shared-memory parallel
+! 
+
+gamma=0
+outinterv=0
+USE ../dnsdata
+USE ../dnsdirect
+!USE rtchecks
+USE ../tke/convenience.cpl
+
+! Parameters
+INTEGER iyP=89
+INTEGER nfmin=1,nfmax=16, nftot
+nftot=nfmax-nfmin+1
+
+WRITE(y(iyP))
+
+! Array declarations
+SHARED ARRAY(-1..iyP,0..nx,-nz..nz) OF REAL psd=0
+POINTER TO STORED ARRAY(-1..iyP,0..nx,-nz..nz) OF REAL psdimage
+
+! Main loop on files
+
+LOOP files FOR n=nfmin TO nfmax
+    ! Read field
+    STRING field_name = WRITE('Field'n'.fld')
+    read_field_parallel(field_name)
+    V(0,0,*)=0
+    ! Compute PSD and CSD
+    IF has_terminal THEN WRITE "Computing PSD and CSD"
+    PARALLEL LOOP FOR ismp=0 TO nsmp-1
+      COMPLEX dudy0, dudyn
+      LOOP FOR ix=ismp*(nx+1) DIV nsmp TO (ismp+1)*(nx+1) DIV nsmp -1 AND ALL iz
+        dudy0.REAL=SUM d140(i)*V(ix, iz, i+1).u.REAL FOR i=-2 TO 2
+        dudy0.IMAG=SUM d140(i)*V(ix, iz, i+1).u.IMAG FOR i=-2 TO 2
+        dudyn.REAL=SUM -d14n(i)*V(ix,iz,ny-1+i).u.REAL FOR i=-2 TO 2
+        dudyn.IMAG=SUM -d14n(i)*V(ix,iz,ny-1+i).u.IMAG FOR i=-2 TO 2
+        psd(0,ix,iz)=~+0.5/alfa0/beta0*([dudy0|V(ix,iz,iyP).u]+[dudyn|V(ix,iz,ny-iyP).u]).REAL
+        LOOP FOR iy=1 TO iyP
+            psd(iy,ix,iz)=~+0.5/alfa0/beta0*([V(ix,iz,iy).u|V(ix,iz,iyP).u]+[V(ix,iz,ny-iy).u|V(ix,iz,ny-iyP).u]).REAL
+        REPEAT LOOP 
+      REPEAT 
+    REPEAT
+REPEAT files
+
+! Average
+psd = ~/nftot
+
+! Save to binary
+IF has_terminal THEN WRITE "Saving to disk"
+psdimage = OPEN("xpsd_iyP_"iyP".bin")
+psdimage(-1..iyP) = psd(-1..iyP)
+CLOSE psdimage
+
+
+! Be polite and say goodbye
+WRITE "Goodbye, man!"
