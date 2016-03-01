@@ -14,6 +14,9 @@
 
 ! XXX Some terms (which ones?) are not computed in iy=0 AND iy=ny
 
+! phiR.MEAN.xx,yy,zz is ZERO for ry=0, it does not need to be computed
+! 
+
 gamma=0
 outinterv=0
 USE ../dnsdata
@@ -83,7 +86,7 @@ IF NOT first THEN READ FROM prev
         CLOSE(tkeimage)
 IF NOT last THEN WRITE TO next
 
-IF has_terminal THEN WRITE "Computing Kolmogorov Equation..."
+IF has_terminal THEN WRITE "Computing Kolmogorov Equation: go get a coffee..."
 ! Compute Kolmogorov Equation
 ! -------------------------------
 LOOP files FOR if=nfmin TO nfmax BY dn
@@ -124,7 +127,7 @@ LOOP files FOR if=nfmin TO nfmax BY dn
 				LOOP FOR ialfa=0 TO nx
                                         Ialfa0ialfa=Ialfa0*ialfa
 					LOOP FOR ibeta=-nz TO nz WITH V(ialfa,ibeta,iy):
-                                          ibetad = IF ibeta>=0 THEN ibeta ELSE nzd+ibeta
+                                          ibetad = izd(ibeta)
                                           E    = Ialfa0ialfa*rx/2+Ibeta0*ibeta*rz/2
                                           E_2  =     [EXP(E)-EXP(-E)];
                                           E_2s = 0.5*[EXP(E)+EXP(-E)]; 
@@ -144,7 +147,7 @@ LOOP files FOR if=nfmin TO nfmax BY dn
                                    WITH VVd(*,iz,0): HFT(uw);
                                 FOR ALL iz
                                 DO WITH VVd(ix,*,0): FFT(uw) FOR ALL ix
-                                WITH phiC(iy,irx,irz),VVd(0,0,0): TURB = uw.REAL;
+                                WITH phiC(iy,irx,irz),VVd(0,0,0): TURB = ~+uw.REAL;
 			REPEAT
 		REPEAT	
         ! scaleENERr, scale_turb and scale_mean
@@ -166,49 +169,39 @@ LOOP files FOR if=nfmin TO nfmax BY dn
                                       Vder(irx,irz,iry).ux.REAL =~+c*[NORM(Vry.u)+NORM(Vyc.u)-2*(Vyc.u|Vry.u)*E+
                                                                       NORM(Vry.v)+NORM(Vyc.v)-2*(Vyc.v|Vry.u)*E+
                                                                       NORM(Vry.w)+NORM(Vyc.w)-2*(Vyc.w|Vry.w)*E].REAL   ! scaleENERr
-!                                      VVd(ialfa,ibetad,0).uu=Vry.u*E - Vyc.u  ! delta_turb.u
-!                                      VVd(ialfa,ibetad,0).vv=Vry.v*E - Vyc.v  ! delta_turb.v
-!                                      VVd(ialfa,ibetad,0).ww=Vry.v*E - Vyc.w  ! delta_turb.w
                                       Vd(ialfa,ibetad).u=Vry.u*E - Vyc.u ! delta_mean.u
                                       Vd(ialfa,ibetad).v=Vry.v*E - Vyc.v ! delta_mean.v
                                       Vd(ialfa,ibetad).w=Vry.w*E - Vyc.w ! delta_mean.w
                                 REPEAT
-!                                DO WITH VVd(ix,*,0), Vd(ix,*): IFT(u); IFT(v); IFT(w); IFT(uu); IFT(vv); IFT(ww);  FOR ALL ix  
-!                                DO WITH VVd(*,iz,0), Vd(*,iz): 
                                 DO WITH Vd(ix,*): IFT(u); IFT(v); IFT(w)  FOR ALL ix  
                                 DO WITH Vd(*,iz): 
                                    RFT(u); RFT(v); RFT(w); ! RFT(uu); RFT(vv); RFT(ww); 
-!				   DO WITH VVd(ix,iz,0),Vd(ix,iz): 
 				   DO WITH Vd(ix,iz): 
-!                                     uvw_r = [uu.REAL^2 + vv.REAL^2 + ww.REAL^2]
-!                                     uvw_i = [uu.IMAG^2 + vv.IMAG^2 + ww.IMAG^2]
                                      uvw_r = [u.REAL^2 + v.REAL^2 + w.REAL^2]
                                      uvw_i = [u.IMAG^2 + v.IMAG^2 + w.IMAG^2]
 	                             VVd(ix,iz,1).uu.REAL = uvw_r * u.REAL;     VVd(ix,iz,1).uu.IMAG = uvw_i * u.IMAG !deltad_turb.u  XXX was .uu.IMAG
 	                             VVd(ix,iz,1).vv.REAL = uvw_r * v.REAL;     VVd(ix,iz,1).vv.IMAG = uvw_i * v.IMAG !deltad_turb.v  XXX was .vv.IMAG
 	                             VVd(ix,iz,1).ww.REAL = uvw_r * w.REAL;     VVd(ix,iz,1).ww.IMAG = uvw_i * w.IMAG !deltad_turb.w  XXX was .ww.IMAG
-                                     VVd(ix,iz,2).uu.REAL = uvw_r*deltameanU; VVd(ix,iz,2).uu.IMAG = uvw_i*deltameanU   !deltad_mean.u
-                                     !VVd(ix,iz,2).vv = [u.REAL^2 + v.REAL^2 + w.REAL^2]*deltamean(v) + I*[u.IMAG^2 + v.IMAG^2 + w.IMAG^2]*deltamean(v) !deltad_mean.v
-                                     VVd(ix,iz,2).ww.REAL = uvw_r*deltameanW; VVd(ix,iz,2).ww.IMAG = uvw_i*deltameanW !deltad_mean.w
+                                     VVd(ix,iz,2).uu.REAL = uvw_r * deltameanU; VVd(ix,iz,2).uu.IMAG = uvw_i * deltameanU   !deltad_mean.u
+                                     VVd(ix,iz,2).ww.REAL = uvw_r * deltameanW; VVd(ix,iz,2).ww.IMAG = uvw_i * deltameanW   !deltad_mean.w
 				   FOR ALL ix
-                                   WITH VVd(*,iz,1): HFT(uu); HFT(vv); HFT(ww); WITH VVd(*,iz,2): HFT(uu); HFT(ww)  !HFT(vv) removed
+                                   WITH VVd(*,iz,1): HFT(uu); HFT(vv); HFT(ww); WITH VVd(*,iz,2): HFT(uu); HFT(ww)  
                                 FOR ALL iz
-                                DO WITH VVd(ix,*,1): FFT(uu); FFT(vv); FFT(ww); WITH VVd(ix,*,2): FFT(uu); FFT(ww) FOR ALL ix   !FFT(vv) removed
+                                DO WITH VVd(ix,*,1): FFT(uu); FFT(vv); FFT(ww); WITH VVd(ix,*,2): FFT(uu); FFT(ww) FOR ALL ix   
                                 WITH Vder(irx,irz,iry): 
                                    uy.REAL=VVd(0,0,1).uu.REAL; vy.REAL=VVd(0,0,1).vv.REAL; wy.REAL=VVd(0,0,1).ww.REAL; ! scale_turb(xx,yy,zz)
-                                   uz.REAL=VVd(0,0,2).uu.REAL; vz.REAL=0.0;                wz.REAL=VVd(0,0,2).ww.REAL; ! scale_mean(xx,yy,zz)
-                                   WRITE irx,irz,iry,uz,wz,uy,wy
+                                   uz.REAL=VVd(0,0,2).uu.REAL; wz.REAL=VVd(0,0,2).ww.REAL; ! scale_mean(xx,yy,zz)
                            REPEAT  
                         REPEAT
                 REPEAT
                 V(0,0,*).u.REAL=meandata(*).u; V(0,0,*).w.REAL=meandata(*).w;
 	        DO 
-                     WITH phiR(iy,ix,iz).TURB, Vder(ix,iz,iy): xx =~+uy.REAL; yy =~+vy.REAL; zz=~+wy.REAL ! scale_turb(xx,yy,zz)
-                     WITH phiR(iy,ix,iz).MEAN, Vder(ix,iz,iy): xx =~+uz.REAL; yy =~+vz.REAL; zz=~+wz.REAL ! scale_mean(xx,yy,zz)
+                     WITH phiR(iy,ix,iz).TURB, Vder(ix,iz,iy): xx =~+uy.REAL; yy =~+vy.REAL; zz =~+wy.REAL ! scale_turb(xx,yy,zz)
+                     WITH phiR(iy,ix,iz).MEAN, Vder(ix,iz,iy): xx =~+uz.REAL; zz =~+wz.REAL                ! scale_mean(xx,yy,zz)
                 FOR ix=0 TO nx_us AND iz=-nz_us TO nz_us 
-        ! D1(scaleENERr)->phiR.VISC.yy  and  phiR.VISC.xx,zz
+        ! D1(scaleENERr) -> phiR.VISC.yy  and  phiR.VISC.xx,zz
                 DO WITH derivs_standalone(iy):
-                     rx = 2*PI/alfa0*(ix*us)/(2*nx+1); rz = 2*PI/beta0*(iz*us)/(2*nz+1)
+                     rx = ix*rx0; rz = iz*rz0
                 ! yr-derivatives
                      phiR(iy,ix,iz).VISC.yy = ~ -2*ni*D1(Vder(ix,iz,iy+(-2..2)).ux.REAL) ! Vder.ux.REAL==scaleENERr
                      LOOP FOR ialfa=0 TO nx AND ibeta=-nz TO nz WITH V(ialfa,ibeta,iy):
@@ -220,20 +213,22 @@ LOOP files FOR if=nfmin TO nfmax BY dn
 		FOR ix=0 TO nx_us AND iz=-nz_us TO nz_us
           END IF 
         REPEAT planes
-        ! phiC.VISC		
-	DO WITH phiC(*,ix,iz),V(0,0,*): 
-		deriv(scaleENER(*,ix,iz),v.REAL); FlushStep1; LeftLUDivStep2(v.REAL,D0mat); FlushStep2
-		VISC = ~ - ni/2 * v.REAL
-	FOR ix=0 TO nx_us AND iz=-nz_us TO nz_us 
 REPEAT files
 
 ! Ensemble averaging (phiC,scalePROD,scaleENER)
 ! ----------------------------
-WITH phiC: scalePROD=~/nftot; scaleENER=~/nftot; PRES=~/nftot; TURB=~/nftot; VISC=~/nftot
+WITH phiC: scalePROD=~/nftot; scaleENER=~/nftot; PRES=~/nftot; TURB=~/nftot;
 WITH phiR: 
            TURB.xx=~/nftot; TURB.yy=~/nftot; TURB.zz=~/nftot; 
            VISC.xx=~/nftot; VISC.yy=~/nftot; VISC.zz=~/nftot; 
            MEAN.xx=~/nftot; MEAN.yy=~/nftot; MEAN.zz=~/nftot; 
+
+! Caompute terms which need final differentiation (phiC.VISC)
+! ----------------------------		
+DO WITH phiC(*,ix,iz),V(0,0,*): 
+  deriv(scaleENER(*,ix,iz),v.REAL); FlushStep1; LeftLUDivStep2(v.REAL,D0mat); FlushStep2
+  VISC = ~ - ni/2 * v.REAL
+FOR ix=0 TO nx_us AND iz=-nz_us TO nz_us 
 
 ! Saving to disk
 ! ----------------------------
