@@ -149,47 +149,55 @@ LOOP files FOR if=nfmin TO nfmax BY dn
 		REPEAT	
         ! scaleENERr, scale_turb and scale_mean
           IF iy>=nyl AND iy<=nyh THEN
+                Vder.ux=0 ! Vder.ux.REAL=scaleENERr must be recomputed every iy, need to be erased
                 Vry==V(ialfa,ibeta,iry)
                 Vyc==V(ialfa,ibeta,iy)
                 meandata.u=V(0,0,*).u.REAL; meandata.w=V(0,0,*).w.REAL; V(0,0,*)=0 ! This block needs V(0,0)=0
         	LOOP FOR iry=iy-2 TO iy+2
-#define deltamean(f) (meandata(iry).f - meandata(iy).f)
+                deltameanU = meandata(iry).u-meandata(iy).u
+                deltameanW = meandata(iry).w-meandata(iy).w
                 	LOOP FOR irx=0 TO nx_us
                            LOOP FOR irz=-nz_us TO nz_us 
                                 VVd=0; Vd=0 ! They must be recomputed every (irx,irz), need to be erased
                                 rx = 2*PI/alfa0*(irx*us)/(2*nx+1); rz = 2*PI/beta0*(irz*us)/(2*nz+1)
                                 LOOP FOR ialfa=0 TO nx AND ibeta=-nz TO nz
-                                  ibetad = izd(ibeta)
+                                  ibetad = izd(ibeta); c=IF ialfa=0 THEN 1 ELSE 2
                                   alfa = alfa0*ialfa; beta = beta0*ibeta; E = EXP(I*alfa*rx+I*beta*rz)
-                                      Vder(irx,irz,iry).ux.REAL =~+2*[NORM(Vry.u)+NORM(Vyc.u)-2*(Vyc.u|Vry.u)*E+
+                                      Vder(irx,irz,iry).ux.REAL =~+c*[NORM(Vry.u)+NORM(Vyc.u)-2*(Vyc.u|Vry.u)*E+
                                                                       NORM(Vry.v)+NORM(Vyc.v)-2*(Vyc.v|Vry.u)*E+
                                                                       NORM(Vry.w)+NORM(Vyc.w)-2*(Vyc.w|Vry.w)*E].REAL   ! scaleENERr
-                                      VVd(ialfa,ibetad,0).uu=Vry.u*E - Vyc.u  ! delta_turb.u
-                                      VVd(ialfa,ibetad,0).vv=Vry.v*E - Vyc.v  ! delta_turb.v
-                                      VVd(ialfa,ibetad,0).ww=Vry.v*E - Vyc.w  ! delta_turb.w
+!                                      VVd(ialfa,ibetad,0).uu=Vry.u*E - Vyc.u  ! delta_turb.u
+!                                      VVd(ialfa,ibetad,0).vv=Vry.v*E - Vyc.v  ! delta_turb.v
+!                                      VVd(ialfa,ibetad,0).ww=Vry.v*E - Vyc.w  ! delta_turb.w
                                       Vd(ialfa,ibetad).u=Vry.u*E - Vyc.u ! delta_mean.u
                                       Vd(ialfa,ibetad).v=Vry.v*E - Vyc.v ! delta_mean.v
                                       Vd(ialfa,ibetad).w=Vry.w*E - Vyc.w ! delta_mean.w
                                 REPEAT
-                                DO WITH VVd(ix,*,0), Vd(ix,*): IFT(uu); IFT(vv); IFT(ww); IFT(u); IFT(v); IFT(w); FOR ALL ix
-                                DO WITH VVd(*,iz,0), Vd(*,iz): 
-                                   RFT(uu); RFT(vv); RFT(ww); RFT(u); RFT(v); RFT(w); 
-				   DO WITH VVd(ix,iz,0),Vd(ix,iz): 
-                                     uvw_r = [uu.REAL^2 + vv.REAL^2 + ww.REAL^2]
-                                     uvw_i = [uu.IMAG^2 + vv.IMAG^2 + ww.IMAG^2]
-	                             VVd(ix,iz,1).uu.REAL = uvw_r * uu.REAL; VVd(ix,iz,1).uu.IMAG = uvw_i * uu.IMAG !deltad_turb.u
-	                             VVd(ix,iz,1).vv.REAL = uvw_r * vv.REAL; VVd(ix,iz,1).vv.IMAG = uvw_i * vv.IMAG !deltad_turb.v
-	                             VVd(ix,iz,1).ww.REAL = uvw_r * ww.REAL; VVd(ix,iz,1).ww.IMAG = uvw_i * ww.IMAG !deltad_turb.w
-                                     VVd(ix,iz,2).uu = [u.REAL^2 + v.REAL^2 + w.REAL^2]*deltamean(u) + I*[u.IMAG^2 + v.IMAG^2 + w.IMAG^2]*deltamean(u) !deltad_mean.u
+!                                DO WITH VVd(ix,*,0), Vd(ix,*): IFT(u); IFT(v); IFT(w); IFT(uu); IFT(vv); IFT(ww);  FOR ALL ix  
+!                                DO WITH VVd(*,iz,0), Vd(*,iz): 
+                                DO WITH Vd(ix,*): IFT(u); IFT(v); IFT(w)  FOR ALL ix  
+                                DO WITH Vd(*,iz): 
+                                   RFT(u); RFT(v); RFT(w); ! RFT(uu); RFT(vv); RFT(ww); 
+!				   DO WITH VVd(ix,iz,0),Vd(ix,iz): 
+				   DO WITH Vd(ix,iz): 
+!                                     uvw_r = [uu.REAL^2 + vv.REAL^2 + ww.REAL^2]
+!                                     uvw_i = [uu.IMAG^2 + vv.IMAG^2 + ww.IMAG^2]
+                                     uvw_r = [u.REAL^2 + v.REAL^2 + w.REAL^2]
+                                     uvw_i = [u.IMAG^2 + v.IMAG^2 + w.IMAG^2]
+	                             VVd(ix,iz,1).uu.REAL = uvw_r * u.REAL;     VVd(ix,iz,1).uu.IMAG = uvw_i * u.IMAG !deltad_turb.u  XXX was .uu.IMAG
+	                             VVd(ix,iz,1).vv.REAL = uvw_r * v.REAL;     VVd(ix,iz,1).vv.IMAG = uvw_i * v.IMAG !deltad_turb.v  XXX was .vv.IMAG
+	                             VVd(ix,iz,1).ww.REAL = uvw_r * w.REAL;     VVd(ix,iz,1).ww.IMAG = uvw_i * w.IMAG !deltad_turb.w  XXX was .ww.IMAG
+                                     VVd(ix,iz,2).uu.REAL = uvw_r*deltameanU; VVd(ix,iz,2).uu.IMAG = uvw_i*deltameanU   !deltad_mean.u
                                      !VVd(ix,iz,2).vv = [u.REAL^2 + v.REAL^2 + w.REAL^2]*deltamean(v) + I*[u.IMAG^2 + v.IMAG^2 + w.IMAG^2]*deltamean(v) !deltad_mean.v
-                                     VVd(ix,iz,2).ww = [u.REAL^2 + v.REAL^2 + w.REAL^2]*deltamean(w) + I*[u.IMAG^2 + v.IMAG^2 + w.IMAG^2]*deltamean(w) !deltad_mean.w
+                                     VVd(ix,iz,2).ww.REAL = uvw_r*deltameanW; VVd(ix,iz,2).ww.IMAG = uvw_i*deltameanW !deltad_mean.w
 				   FOR ALL ix
-                                   DO WITH VVd(*,iz,i): HFT(uu); HFT(vv); HFT(ww) FOR i=1 TO 2
+                                   WITH VVd(*,iz,1): HFT(uu); HFT(vv); HFT(ww); WITH VVd(*,iz,2): HFT(uu); HFT(ww)  !HFT(vv) removed
                                 FOR ALL iz
-                                DO WITH VVd(ix,*,i): FFT(uu); FFT(vv); FFT(ww) FOR ALL ix AND i=1 TO 2
+                                DO WITH VVd(ix,*,1): FFT(uu); FFT(vv); FFT(ww); WITH VVd(ix,*,2): FFT(uu); FFT(ww) FOR ALL ix   !FFT(vv) removed
                                 WITH Vder(irx,irz,iry): 
-                                                        uy.REAL=VVd(0,0,1).uu.REAL; vy.REAL=VVd(0,0,1).vv.REAL; wy.REAL=VVd(0,0,1).ww.REAL; ! scale_turb(xx,yy,zz)
-                                                        uz.REAL=VVd(0,0,2).uu.REAL; vz.REAL=VVd(0,0,2).vv.REAL; wz.REAL=VVd(0,0,2).ww.REAL; ! scale_mean(xx,yy,zz)
+                                   uy.REAL=VVd(0,0,1).uu.REAL; vy.REAL=VVd(0,0,1).vv.REAL; wy.REAL=VVd(0,0,1).ww.REAL; ! scale_turb(xx,yy,zz)
+                                   uz.REAL=VVd(0,0,2).uu.REAL; vz.REAL=0.0;                wz.REAL=VVd(0,0,2).ww.REAL; ! scale_mean(xx,yy,zz)
+                                   WRITE irx,irz,iry,uz,wz,uy,wy
                            REPEAT  
                         REPEAT
                 REPEAT
@@ -198,16 +206,16 @@ LOOP files FOR if=nfmin TO nfmax BY dn
                      WITH phiR(iy,ix,iz).TURB, Vder(ix,iz,iy): xx =~+uy.REAL; yy =~+vy.REAL; zz=~+wy.REAL ! scale_turb(xx,yy,zz)
                      WITH phiR(iy,ix,iz).MEAN, Vder(ix,iz,iy): xx =~+uz.REAL; yy =~+vz.REAL; zz=~+wz.REAL ! scale_mean(xx,yy,zz)
                 FOR ix=0 TO nx_us AND iz=-nz_us TO nz_us 
-        ! derive phiR to compute DIVphiR
+        ! D1(scaleENERr)->phiR.VISC.yy  and  phiR.VISC.xx,zz
                 DO WITH derivs_standalone(iy):
+                     rx = 2*PI/alfa0*(ix*us)/(2*nx+1); rz = 2*PI/beta0*(iz*us)/(2*nz+1)
                 ! yr-derivatives
                      phiR(iy,ix,iz).VISC.yy = ~ -2*ni*D1(Vder(ix,iz,iy+(-2..2)).ux.REAL) ! Vder.ux.REAL==scaleENERr
                      LOOP FOR ialfa=0 TO nx AND ibeta=-nz TO nz WITH V(ialfa,ibeta,iy):
-                       rx = 2*PI/alfa0*(ix*us)/(2*nx+1); rz = 2*PI/beta0*(iz*us)/(2*nz+1)
-                       alfa = alfa0*ialfa; beta = beta0*ibeta; E = EXP(I*alfa*rx+I*beta*rz); 
+                       Ialfa = alfa0*ialfa*I; Ibeta = beta0*ibeta*I; E = EXP(Ialfa*rx+Ibeta*rz); 
 		       WITH phiR(iy,ix,iz).VISC:
-		         xx = ~ -(IF ialfa=0 THEN 2 ELSE 4)*ni * [(-2*I*alfa*NORM(u) - 2*I*alfa*NORM(v) - 2*I*alfa*NORM(w)) * E].REAL
-		         zz = ~ -(IF ialfa=0 THEN 2 ELSE 4)*ni * [(-2*I*beta*NORM(u) - 2*I*beta*NORM(v) - 2*I*beta*NORM(w)) * E].REAL
+		         xx = ~ +(IF ialfa=0 THEN 4 ELSE 8)*ni * [Ialfa*(NORM(u) + NORM(v) + NORM(w)) * E].REAL
+		         zz = ~ +(IF ialfa=0 THEN 4 ELSE 8)*ni * [Ibeta*(NORM(u) + NORM(v) + NORM(w)) * E].REAL
                       REPEAT
 		FOR ix=0 TO nx_us AND iz=-nz_us TO nz_us
           END IF 
