@@ -37,6 +37,11 @@ INTEGER nx_us=nx DIV us,nz_us=nz DIV us
 REAL dxOus=2*PI*us/[alfa0*(2*nx+1)], dzOus=2*PI*us/[alfa0*(2*nx+1)]
 INLINE INTEGER FUNCTION izd(INTEGER iz)=IF iz>=0 THEN iz ELSE nzd+iz
 
+rx0=2*PI*us/(2*nx+1)   ! 
+rz0=2*PI*us/(2*nz+1)   ! some
+Ialfa0=I*alfa0         ! constants
+Ibeta0=I*beta0         ! 
+
 ! Definitions
 ! -----------------------------
 FLUXVEC = STRUCTURE(REAL xx, yy, zz)
@@ -96,24 +101,19 @@ LOOP files FOR if=nfmin TO nfmax BY dn
         ! Derivatives and pressure
         compute_pressure(Vder,pressure)
         ! scalePROD, scaleENER, phiC.PRES
-	rx0=2*PI/alfa0*us/(2*nx+1)
-	rz0=2*PI/beta0*us/(2*nz+1)
-	Ialfa0=I*alfa0
-	Ibeta0=I*beta0
         LOOP planes FOR iy=nyl-2 TO nyh +2 
         WRITE iy
                 LOOP FOR ialfa=0 TO nx 
-                   Ialfa0ialfa=Ialfa0*ialfa; c=IF ialfa=0 THEN 1 ELSE 2
+                   c=IF ialfa=0 THEN 1 ELSE 2
                    LOOP FOR ibeta=-nz TO nz WITH V(ialfa,ibeta,iy):
-                        Ibeta0ibeta=Ibeta0*ibeta
 			uv=v|u; uu=u|u; vv=v|v; ww=w|w; pv=v|pressure(ialfa,ibeta,iy)
                 	LOOP FOR ix=0 TO nx_us
                         	LOOP FOR iz=-nz_us TO nz_us WITH phiC(iy,ix,iz),meandata(iy):
-                                         COMPLEX E = Ialfa0ialfa*rx0*ix+Ibeta0ibeta*rz0*iz 
+                                         COMPLEX E = I*ialfa*rx0*ix+I*ibeta*rz0*iz 
                                          E = c*(2-EXP(E)-EXP(-E)); 
 	          scalePROD(iy,ix,iz)      = ~ + [ E * uv ].REAL * -2*Uy
                        PRES                = ~ + [ E * pv ].REAL *  2
-                  scaleENER(iy,ix,iz)      = ~ + [ E * uu ].REAL + [ E * vv ].REAL + [ E * ww ].REAL
+                  scaleENER(iy,ix,iz)      = ~ + [ E * (uu + vv + ww) ].REAL
                                 REPEAT     
                         REPEAT
 		   REPEAT
@@ -125,10 +125,9 @@ LOOP files FOR if=nfmin TO nfmax BY dn
                                 WITH VVd(*,*,0): uu=0; vv=0; ww=0; uv=0; 
                                 rz = rz0*irz
 				LOOP FOR ialfa=0 TO nx
-                                        Ialfa0ialfa=Ialfa0*ialfa
 					LOOP FOR ibeta=-nz TO nz WITH V(ialfa,ibeta,iy):
                                           ibetad = izd(ibeta)
-                                          E    = Ialfa0ialfa*rx/2+Ibeta0*ibeta*rz/2
+                                          E    = I*ialfa*rx/2+I*ibeta*rz/2
                                           E_2  =     [EXP(E)-EXP(-E)];
                                           E_2s = 0.5*[EXP(E)+EXP(-E)]; 
 	                VVd(ialfa,ibetad,0).uu = E_2*u    !du
@@ -157,21 +156,25 @@ LOOP files FOR if=nfmin TO nfmax BY dn
                 Vyc==V(ialfa,ibeta,iy)
                 meandata.u=V(0,0,*).u.REAL; meandata.w=V(0,0,*).w.REAL; V(0,0,*)=0 ! This block needs V(0,0)=0
         	LOOP FOR iry=iy-2 TO iy+2
-                deltameanU = meandata(iry).u-meandata(iy).u
-                deltameanW = meandata(iry).w-meandata(iy).w
+                        deltameanU = meandata(iry).u-meandata(iy).u
+                        deltameanW = meandata(iry).w-meandata(iy).w
                 	LOOP FOR irx=0 TO nx_us
+                           rx=rx0*irx
                            LOOP FOR irz=-nz_us TO nz_us 
+                                rz=irz*rz0
                                 VVd=0; Vd=0 ! They must be recomputed every (irx,irz), need to be erased
-                                rx = 2*PI/alfa0*(irx*us)/(2*nx+1); rz = 2*PI/beta0*(irz*us)/(2*nz+1)
-                                LOOP FOR ialfa=0 TO nx AND ibeta=-nz TO nz
-                                  ibetad = izd(ibeta); c=IF ialfa=0 THEN 1 ELSE 2
-                                  alfa = alfa0*ialfa; beta = beta0*ibeta; E = EXP(I*alfa*rx+I*beta*rz)
-                                      Vder(irx,irz,iry).ux.REAL =~+c*[NORM(Vry.u)+NORM(Vyc.u)-2*(Vyc.u|Vry.u)*E+
-                                                                      NORM(Vry.v)+NORM(Vyc.v)-2*(Vyc.v|Vry.u)*E+
-                                                                      NORM(Vry.w)+NORM(Vyc.w)-2*(Vyc.w|Vry.w)*E].REAL   ! scaleENERr
-                                      Vd(ialfa,ibetad).u=Vry.u*E - Vyc.u ! delta_mean.u
-                                      Vd(ialfa,ibetad).v=Vry.v*E - Vyc.v ! delta_mean.v
-                                      Vd(ialfa,ibetad).w=Vry.w*E - Vyc.w ! delta_mean.w
+                                LOOP FOR ibeta=-nz TO nz
+                                  ibetad = izd(ibeta); 
+                                  LOOP FOR ialfa=0 TO nx AND ibeta=-nz TO nz
+                                     c=IF ialfa=0 THEN 1 ELSE 2
+                                     E = EXP(I*ialfa*rx0*irx+I*ibeta*rz0*irz)
+                                     Vder(irx,irz,iry).ux.REAL =~+c*[NORM(Vry.u)+NORM(Vyc.u)-2*(Vyc.u|Vry.u)*E+
+                                                                     NORM(Vry.v)+NORM(Vyc.v)-2*(Vyc.v|Vry.u)*E+
+                                                                     NORM(Vry.w)+NORM(Vyc.w)-2*(Vyc.w|Vry.w)*E].REAL   ! scaleENERr
+                                     Vd(ialfa,ibetad).u=Vry.u*E - Vyc.u ! delta_mean.u
+                                     Vd(ialfa,ibetad).v=Vry.v*E - Vyc.v ! delta_mean.v
+                                     Vd(ialfa,ibetad).w=Vry.w*E - Vyc.w ! delta_mean.w
+                                  REPEAT
                                 REPEAT
                                 DO WITH Vd(ix,*): IFT(u); IFT(v); IFT(w)  FOR ALL ix  
                                 DO WITH Vd(*,iz): 
@@ -179,9 +182,9 @@ LOOP files FOR if=nfmin TO nfmax BY dn
 				   DO WITH Vd(ix,iz): 
                                      uvw_r = [u.REAL^2 + v.REAL^2 + w.REAL^2]
                                      uvw_i = [u.IMAG^2 + v.IMAG^2 + w.IMAG^2]
-	                             VVd(ix,iz,1).uu.REAL = uvw_r * u.REAL;     VVd(ix,iz,1).uu.IMAG = uvw_i * u.IMAG !deltad_turb.u  XXX was .uu.IMAG
-	                             VVd(ix,iz,1).vv.REAL = uvw_r * v.REAL;     VVd(ix,iz,1).vv.IMAG = uvw_i * v.IMAG !deltad_turb.v  XXX was .vv.IMAG
-	                             VVd(ix,iz,1).ww.REAL = uvw_r * w.REAL;     VVd(ix,iz,1).ww.IMAG = uvw_i * w.IMAG !deltad_turb.w  XXX was .ww.IMAG
+	                             VVd(ix,iz,1).uu.REAL = uvw_r * u.REAL;     VVd(ix,iz,1).uu.IMAG = uvw_i * u.IMAG !deltad_turb.u  
+	                             VVd(ix,iz,1).vv.REAL = uvw_r * v.REAL;     VVd(ix,iz,1).vv.IMAG = uvw_i * v.IMAG !deltad_turb.v  
+	                             VVd(ix,iz,1).ww.REAL = uvw_r * w.REAL;     VVd(ix,iz,1).ww.IMAG = uvw_i * w.IMAG !deltad_turb.w 
                                      VVd(ix,iz,2).uu.REAL = uvw_r * deltameanU; VVd(ix,iz,2).uu.IMAG = uvw_i * deltameanU   !deltad_mean.u
                                      VVd(ix,iz,2).ww.REAL = uvw_r * deltameanW; VVd(ix,iz,2).ww.IMAG = uvw_i * deltameanW   !deltad_mean.w
 				   FOR ALL ix
@@ -202,14 +205,14 @@ LOOP files FOR if=nfmin TO nfmax BY dn
         ! D1(scaleENERr) -> phiR.VISC.yy  and  phiR.VISC.xx,zz
                 DO WITH derivs_standalone(iy):
                      rx = ix*rx0; rz = iz*rz0
-                ! yr-derivatives
+        ! yr-derivatives
                      phiR(iy,ix,iz).VISC.yy = ~ -2*ni*D1(Vder(ix,iz,iy+(-2..2)).ux.REAL) ! Vder.ux.REAL==scaleENERr
                      LOOP FOR ialfa=0 TO nx AND ibeta=-nz TO nz WITH V(ialfa,ibeta,iy):
-                       Ialfa = alfa0*ialfa*I; Ibeta = beta0*ibeta*I; E = EXP(Ialfa*rx+Ibeta*rz); 
+                       E = EXP(I*ialfa*rx+I*ibeta*rz); uu_vv_ww_E = [NORM(u) + NORM(v) + NORM(w)]*E
 		       WITH phiR(iy,ix,iz).VISC:
-		         xx = ~ +(IF ialfa=0 THEN 4 ELSE 8)*ni * [Ialfa*(NORM(u) + NORM(v) + NORM(w)) * E].REAL
-		         zz = ~ +(IF ialfa=0 THEN 4 ELSE 8)*ni * [Ibeta*(NORM(u) + NORM(v) + NORM(w)) * E].REAL
-                      REPEAT
+		         xx = ~ +(IF ialfa=0 THEN 4 ELSE 8)*ni * [I*alfa0*ialfa*uu_vv_ww_E].REAL
+		         zz = ~ +(IF ialfa=0 THEN 4 ELSE 8)*ni * [I*beta0*ibeta*uu_vv_ww_E].REAL ! XXX Can this be merged with scaleENER?
+                     REPEAT
 		FOR ix=0 TO nx_us AND iz=-nz_us TO nz_us
           END IF 
         REPEAT planes
