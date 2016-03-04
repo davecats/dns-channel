@@ -170,7 +170,7 @@ LOOP files FOR if=nfmin TO nfmax BY dn
                                      E = EXP(I*ialfa*rx0*irx+I*ibeta*rz0*irz)
                                      Vder(irx,irz,iry).ux.REAL =~+c*[NORM(Vry.u)+NORM(Vyc.u)-2*(Vyc.u|Vry.u)*E+
                                                                      NORM(Vry.v)+NORM(Vyc.v)-2*(Vyc.v|Vry.u)*E+
-                                                                     NORM(Vry.w)+NORM(Vyc.w)-2*(Vyc.w|Vry.w)*E].REAL   ! scaleENERr
+                                                                     NORM(Vry.w)+NORM(Vyc.w)-2*(Vyc.w|Vry.w)*E].REAL   ! scaleENERr XXX (also pseudo-spectrally?)
                                      Vd(ialfa,ibetad).u=Vry.u*E - Vyc.u ! delta_mean.u
                                      Vd(ialfa,ibetad).v=Vry.v*E - Vyc.v ! delta_mean.v
                                      Vd(ialfa,ibetad).w=Vry.w*E - Vyc.w ! delta_mean.w
