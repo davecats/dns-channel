@@ -27,10 +27,33 @@ IF first THEN
 	DO Mf(i,j)=(y_first(-1+j)-y_first(-1))**(4-i) FOR i=0 TO 4 AND j=0 TO 4; LUdecomp Mf
 END IF
 
-
+INLINE FUNCTION D20(ARRAY(*) OF COMPLEX f)=d240(-2)*f(-1)+d240(-1)*f(0)+d240(0)*f(1)+d240(1)*f(2)+d240(2)*f(3)
+COMPLEX FUNCTION calcp0v(INTEGER ix,iz; COMPLEX vdudy, vdwdy)
+  alfa=alfa0*ix; beta=beta0*iz
+  ialfa==I*alfa; ibeta==I*beta
+  k2=alfa^2+beta^2
+  WITH V(ix,iz)
+  IF k2>0 THEN
+    RESULT=-ni/k2*[ialfa*D20(u)+ibeta*D20(w)]+[ialfa*vdudy+ibeta*vdwdy]/k2
+  ELSE
+    RESULT=0
+  END IF
+END calcp0v
+INLINE FUNCTION D2n(ARRAY(*) OF COMPLEX f)=d24n(-2)*f(ny-3)+d24n(-1)*f(ny-2)+d24n(0)*f(ny-1)+d24n(1)*f(ny)+d24n(2)*f(ny+1)
+COMPLEX FUNCTION calcpnv(INTEGER ix,iz; COMPLEX vdudy, vdwdy)
+  alfa=alfa0*ix; beta=beta0*iz
+  ialfa==I*alfa; ibeta==I*beta
+  k2=alfa^2+beta^2
+  WITH V(ix,iz)
+  IF k2>0 THEN
+    RESULT=-ni/k2*[ialfa*D2n(u)+ibeta*D2n(w)]+[ialfa*vdudy+ibeta*vdwdy]/k2
+  ELSE
+    RESULT=0
+  END IF
+END calcpnv
 
 SUBROUTINE solve_dirichelet(ARRAY(*) OF COMPLEX hp; COMPLEX pres_up, pres_down; REAL k2; POINTER TO ARRAY(*) OF COMPLEX pres)
-! 
+!
 ! Solves the two-point boundary value problem for the pressure Fourier coefficient
 !
 ! Input:  ARRAY(-1..ny+1) OF COMPLEX hp
@@ -55,8 +78,8 @@ REPEAT
 DO WITH fderivatives(2): mat(2,2+id) = d2(id) - k2*d0(id) FOR id=-1 TO 2
 DO WITH fderivatives(ny-2): mat(ny-2,ny-2+id) = d2(id) - k2*d0(id) FOR id=-2 TO 1
 WITH fderivatives(1):
-	mat(1,1) = (d2(0)-d2(-2)/d4(-2)*d4(0))-k2*(d0(0)-d0(-2)/d4(-2)*d4(0)); 
-	mat(1,2) = (d2(1)-d2(-2)/d4(-2)*d4(1))-k2*(d0(1)-d0(-2)/d4(-2)*d4(1)); 
+	mat(1,1) = (d2(0)-d2(-2)/d4(-2)*d4(0))-k2*(d0(0)-d0(-2)/d4(-2)*d4(0));
+	mat(1,2) = (d2(1)-d2(-2)/d4(-2)*d4(1))-k2*(d0(1)-d0(-2)/d4(-2)*d4(1));
 	mat(1,3) = (d2(2)-d2(-2)/d4(-2)*d4(2))-k2*(d0(2)-d0(-2)/d4(-2)*d4(2));
 WITH fderivatives(ny-1):
 	mat(ny-1,ny-3) = (d2(-2)-d2(2)/d4(2)*d4(-2)) - k2*(d0(-2)-d0(2)/d4(2)*d4(-2))
@@ -110,7 +133,7 @@ LOOP FOR iy=2 TO ny-2
 	DO WITH fderivatives(iy): mat(iy,iy+id) = d2(id) FOR id=-2 TO 2
 REPEAT
 DO WITH fderivatives(1): mat(1,1+id) = d2(id) - d2(-2)/fd140(-2)*fd140(id) FOR id=-1 TO 2
-DO WITH fderivatives(ny-1): mat(ny-1,ny-1+id) = d2(id) - d2(2)/d4(2)*d4(id) FOR id=-2 TO 1  
+DO WITH fderivatives(ny-1): mat(ny-1,ny-1+id) = d2(id) - d2(2)/d4(2)*d4(id) FOR id=-2 TO 1
 LOOP FOR iy=1 TO ny-1 BY 2
 	yp1=y_first(iy+1)-y_first(iy); ym1=y_first(iy-1)-y_first(iy)
 	a1=-1/3*ym1+1/6*yp1+1/6*yp1*yp1/ym1
@@ -130,7 +153,7 @@ REPEAT
 tn(1) = ~ - fderivatives(1).d2(-2) / fd140(-2) * dpdy_down
 tn(ny) = integral
 tn(0) = hp(0); tn(0) = ~ - fd240(-2)/fd140(-2) * dpdy_down
- 
+
 
 ! Solution
 LUdecomp mat
@@ -152,7 +175,7 @@ SUBROUTINE compute_pressure(POINTER TO ARRAY(*,*,*) OF DERIVS velder; POINTER TO
 ! Solves Poisson's equation for the pressure field (parallel version).
 !
 ! Both input (V) and output (pressure) are ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) and are defined (global) outside this subroutine
-! Velder=grad(V) is also retained as output, since in most postprocessing this is used. 
+! Velder=grad(V) is also retained as output, since in most postprocessing this is used.
 !
 ! It is assumed that the spatial average of the pressure is constant = 0
 !
@@ -172,6 +195,7 @@ velder=0
 ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) OF COMPLEX hp=0
 ARRAY(0..nxd-1,0..nzd-1) OF DERIVS velderd=0
 ARRAY(0..nxd-1,0..nzd-1) OF COMPLEX hpd=0
+ARRAY(0..nxd-1,0..nzd-1) OF COMPLEX vuy0=0,vwy0=0,vvy0=0,vuyn=0,vwyn=0,vvyn=0
 COMPLEX pres_up, pres_down, dpdy_down
 
 ARRAY(-1..ny+1) OF COMPLEX slice_hp=0, hp_first=0, pres_first=0
@@ -206,11 +230,49 @@ LOOP FOR ix=0 TO nx AND iz=-nz TO nz
 REPEAT
 FlushStep2
 
+! Computing nonlinear term for calcp0 and calcpn
+IF first THEN
+  Vd=0; velderd=0
+  LOOP FOR ix=0 TO nx
+		velderd(ix,0..nz) = velder(ix,0..nz,0)
+		velderd(ix,nzd+(-nz..-1)) = velder(ix,-nz..-1,0)
+                Vd(ix,0..nz).v = V(ix,0..nz,0).v
+                Vd(ix,nzd+(-nz..-1)).v = V(ix,-nz..-1,0).v
+	REPEAT
+  DO WITH velderd(ix,*): IFT(uy); IFT(wy); IFT(vy); WITH Vd(ix,*): IFT(v) FOR ALL ix
+  DO WITH velderd(*,iz): RFT(uy); RFT(wy); RFT(vy); WITH Vd(*,iz): RFT(v) FOR ALL iz
+  LOOP FOR ALL ix,iz WITH velderd(ix,iz),Vd(ix,iz):
+    vuy0(ix,iz).REAL = v.REAL*uy.REAL; vuy0(ix,iz).IMAG = v.IMAG*uy.IMAG
+    vwy0(ix,iz).REAL = v.REAL*wy.REAL; vwy0(ix,iz).IMAG = v.IMAG*wy.IMAG
+    vvy0(ix,iz).REAL = v.REAL*vy.REAL; vvy0(ix,iz).IMAG = v.IMAG*vy.IMAG
+  REPEAT
+  DO HFT(vuy0(*,iz)); HFT(vwy0(*,iz)); HFT(vvy0(*,iz)) FOR ALL iz
+  DO FFT(vuy0(ix,*)); FFT(vwy0(ix,*)); FFT(vvy0(ix,*)) FOR ALL ix
+END IF
+
+IF last THEN
+  Vd=0; velderd=0;
+  LOOP FOR ix=0 TO nx
+		velderd(ix,0..nz) = velder(ix,0..nz,ny)
+		velderd(ix,nzd+(-nz..-1)) = velder(ix,-nz..-1,ny)
+                Vd(ix,0..nz).v = V(ix,0..nz,ny).v
+                Vd(ix,nzd+(-nz..-1)).v = V(ix,-nz..-1,ny).v
+	REPEAT
+  DO WITH velderd(ix,*): IFT(uy); IFT(wy); IFT(vy); WITH Vd(ix,*): IFT(v) FOR ALL ix
+  DO WITH velderd(*,iz): RFT(uy); RFT(wy); RFT(vy); WITH Vd(*,iz): RFT(v) FOR ALL iz
+  LOOP FOR ALL ix,iz WITH velderd(ix,iz),Vd(ix,iz):
+    vuyn(ix,iz).REAL = v.REAL*uy.REAL; vuyn(ix,iz).IMAG = v.IMAG*uy.IMAG
+    vwyn(ix,iz).REAL = v.REAL*wy.REAL; vwyn(ix,iz).IMAG = v.IMAG*wy.IMAG
+    vvyn(ix,iz).REAL = v.REAL*vy.REAL; vvyn(ix,iz).IMAG = v.IMAG*vy.IMAG
+  REPEAT
+  DO HFT(vuyn(*,iz)); HFT(vwyn(*,iz)); HFT(vvyn(*,iz)) FOR ALL iz
+  DO FFT(vuyn(ix,*)); FFT(vwyn(ix,*)); FFT(vvyn(ix,*)) FOR ALL ix
+END IF
 
 ! Computing nonlinear terms
 LOOP FOR iy=nyl-2 TO nyh+2
-	velderd=0; hpd=0
-	
+	velderd=0; hpd=0;
+
 	! Dealiasing derivatives
 	LOOP FOR ix=0 TO nx
 		velderd(ix,0..nz) = velder(ix,0..nz,iy)
@@ -230,11 +292,11 @@ hpd(ix,iz).IMAG = 2*(ux.IMAG*vy.IMAG+vy.IMAG*wz.IMAG+ux.IMAG*wz.IMAG-vx.IMAG*uy.
 	LOOP FOR ix=0 TO nx
 		hp(ix,0..nz,iy) = hpd(ix,0..nz)
 		hp(ix,-nz..-1,iy) = hpd(ix,nzd+(-nz..-1))
-	REPEAT	
+	REPEAT
 REPEAT
 
 
-! ________________ Solving for coefficient (0,0) (Neumann problem) 
+! ________________ Solving for coefficient (0,0) (Neumann problem)
 hp_first=0; slice_hp=0; pres_first=0
 DO slice_hp(iy) = hp(0,0,iy) FOR iy=miny TO maxy
 IF NOT first THEN
@@ -248,8 +310,7 @@ IF NOT last  THEN READ BINARY FROM next hp_first; FLUSH next
 IF NOT first THEN WRITE BINARY TO prev hp_first; FLUSH prev
 
 IF first THEN
-	dpdy_down=0
-	DO dpdy_down = ~ + ni*fd240(id)*V(0,0,id+1).v FOR id=-2 TO 2
+	dpdy_down = ni*[SUM fd240(id)*V(0,0,id+1).v FOR id=-2 TO 2] - vvy0(0,0)
 	solve_neumann(hp_first, dpdy_down, 0, pres_first)
 END IF
 
@@ -260,7 +321,7 @@ DO _pressure_(0,0,iy) = pres_first(iy) FOR iy=nyl-2 TO nyh+2
 
 ! __________________ Solving for coefficient (alfa,beta) (Dirichelet problem)
 LOOP FOR ix=0 TO nx AND iz=-nz TO nz EXCEPT ix=0 AND iz=0
-	alfa = alfa0*ix; beta = beta0*iz; k2 = alfa^2 + beta^2
+	alfa = alfa0*ix; beta = beta0*iz; k2 = alfa^2 + beta^2; izd = IF iz>=0 THEN iz ELSE nzd+iz
 	hp_first=0; slice_hp=0; pres_first=0
 
 	DO slice_hp(iy) = hp(ix,iz,iy) FOR iy=miny TO maxy
@@ -275,13 +336,13 @@ LOOP FOR ix=0 TO nx AND iz=-nz TO nz EXCEPT ix=0 AND iz=0
 	IF NOT first THEN WRITE BINARY TO prev hp_first; FLUSH prev
 
 
-	IF last THEN pres_up = calcpn(ix,iz) 
+	IF last THEN pres_up = calcpnv(ix,iz,vuyn(ix,izd),vwyn(ix,izd)); 
 	IF NOT last  THEN READ BINARY FROM next pres_up; FLUSH next
 	IF NOT first THEN WRITE BINARY TO prev pres_up; FLUSH prev
-	
+
 
 	IF first THEN
-		pres_down = calcp0(ix,iz)
+		pres_down = calcp0v(ix,iz,vuy0(ix,izd),vwy0(ix,izd)) 
 		solve_dirichelet(hp_first, pres_up, pres_down, k2, pres_first)
 	END IF
 
@@ -289,9 +350,6 @@ LOOP FOR ix=0 TO nx AND iz=-nz TO nz EXCEPT ix=0 AND iz=0
 	IF NOT last THEN WRITE BINARY TO next pres_first; FLUSH next
 
 	DO _pressure_(ix,iz,iy) = pres_first(iy) FOR iy=nyl-2 TO nyh+2
-
 REPEAT
 
 END compute_pressure
-
-
