@@ -12,16 +12,12 @@
 ! TERMS and scale energy are skipped, as already computed with tke.cpl 
 ! 
 
-! XXX Some terms (which ones?) are not computed in iy=0 AND iy=ny
-
-! phiR.MEAN.xx,yy,zz is ZERO for ry=0, it does not need to be computed
-! 
-
 gamma=0
 outinterv=0
 USE ../dnsdata
 USE ../dnsdirect
 USE ../tke/convenience
+#define DIVERGENCE
 !USE rtchecks
 
 
@@ -36,11 +32,8 @@ INTEGER nftot=[(nfmax-nfmin) DIV dn]+1
 INTEGER nx_us=nx DIV us,nz_us=nz DIV us
 REAL dxOus=2*PI*us/[alfa0*(2*nx+1)], dzOus=2*PI*us/[alfa0*(2*nx+1)]
 INLINE INTEGER FUNCTION izd(INTEGER iz)=IF iz>=0 THEN iz ELSE nzd+iz
-
-rx0=2*PI*us/(2*nx+1)   ! 
-rz0=2*PI*us/(2*nz+1)   ! some
-Ialfa0=I*alfa0         ! constants
-Ibeta0=I*beta0         ! 
+rx0=2*PI*us/(2*nx+1)
+rz0=2*PI*us/(2*nz+1) 
 
 ! Definitions
 ! -----------------------------
@@ -57,6 +50,9 @@ ARRAY(nyl-2..nyh+2) OF REAL scaleDISS=0
 ARRAY(nyl-2..nyh+2,0..nx_us,-nz_us..nz_us) OF REAL scaleENER=0
 ARRAY(nyl-2..nyh+2,0..nx_us,-nz_us..nz_us) OF SPACEFLUX phiC=0
 ARRAY(nyl-2..nyh+2,0..nx_us,-nz_us..nz_us) OF SCALEFLUX phiR=0
+#ifdef DIVERGENCE
+ARRAY(nyl-2..nyh+2,0..nx_us,-nz_us..nz_us) OF DIVSCALEFLUX DIVphiR=0
+#endif
 ARRAY(nyl-2..nyh+2) OF MEANTERMS meandata=0
 
 ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) OF COMPLEX pressure=0
@@ -76,6 +72,15 @@ POINTER TO STORED STRUCTURE[
 ] fluximage
 
 POINTER TO STORED ARRAY(-1..ny+1,0..nx_us,-nz_us..nz_us) OF SPACEFLUX phiCimage
+
+! FD for derivatives
+! ------------------------------
+#define dx0(f) [-3/2*Vder(0,iz,iy).f.REAL + 2*Vder(1,iz,iy).f.REAL - 1/2*Vder(2,iz,iy).f.REAL]/dxOus 
+#define dxn(f) [3/2*Vder(nx_us,iz,iy).f.REAL - 2*Vder(nx_us-1,iz,iy).f.REAL + 1/2*Vder(nx_us-2,iz,iy).f.REAL]/dxOus
+#define dx(f)  [Vder(ix+1,iz,iy).f.REAL - Vder(ix-1,iz,iy).f.REAL]/(2*dxOus) 
+#define dz0(f) [-3/2*Vder(ix,-nz_us,iy).f.REAL + 2*Vder(ix,-nz_us+1,iy).f.REAL - 1/2*Vder(ix,-nz_us+2,iy).f.REAL]/dzOus
+#define dzn(f) [3/2*Vder(ix,nz_us,iy).f.REAL - 2*Vder(ix,-nz_us-1,iy).f.REAL + 1/2*Vder(ix,-nz_us-2,iy).f.REAL]/dzOus
+#define dz(f)  [Vder(ix,iz+1,iy).f.REAL - Vder(ix,iz-1,iy).f.REAL]/(2*dzOus) 
 
 ! Load MEANTERMS and TKETERMS
 ! ------------------------------
@@ -167,7 +172,7 @@ LOOP files FOR if=nfmin TO nfmax BY dn
                                   ibetad = izd(ibeta); 
                                   LOOP FOR ialfa=0 TO nx AND ibeta=-nz TO nz
                                      c=IF ialfa=0 THEN 1 ELSE 2
-                                     E = EXP(I*ialfa*rx0*irx+I*ibeta*rz0*irz)
+                                     E = EXP(I*ialfa*rx+I*ibeta*rz)
                                      Vder(irx,irz,iry).ux.REAL =~+c*[NORM(Vry.u)+NORM(Vyc.u)-2*(Vyc.u|Vry.u)*E+
                                                                      NORM(Vry.v)+NORM(Vyc.v)-2*(Vyc.v|Vry.u)*E+
                                                                      NORM(Vry.w)+NORM(Vyc.w)-2*(Vyc.w|Vry.w)*E].REAL   ! scaleENERr XXX (also pseudo-spectrally?)
@@ -178,7 +183,7 @@ LOOP files FOR if=nfmin TO nfmax BY dn
                                 REPEAT
                                 DO WITH Vd(ix,*): IFT(u); IFT(v); IFT(w)  FOR ALL ix  
                                 DO WITH Vd(*,iz): 
-                                   RFT(u); RFT(v); RFT(w); ! RFT(uu); RFT(vv); RFT(ww); 
+                                   RFT(u); RFT(v); RFT(w);
 				   DO WITH Vd(ix,iz): 
                                      uvw_r = [u.REAL^2 + v.REAL^2 + w.REAL^2]
                                      uvw_i = [u.IMAG^2 + v.IMAG^2 + w.IMAG^2]
@@ -198,21 +203,30 @@ LOOP files FOR if=nfmin TO nfmax BY dn
                         REPEAT
                 REPEAT
                 V(0,0,*).u.REAL=meandata(*).u; V(0,0,*).w.REAL=meandata(*).w;
-	        DO 
-                     WITH phiR(iy,ix,iz).TURB, Vder(ix,iz,iy): xx =~+uy.REAL; yy =~+vy.REAL; zz =~+wy.REAL ! scale_turb(xx,yy,zz)
-                     WITH phiR(iy,ix,iz).MEAN, Vder(ix,iz,iy): xx =~+uz.REAL; zz =~+wz.REAL                ! scale_mean(xx,yy,zz)
-                FOR ix=0 TO nx_us AND iz=-nz_us TO nz_us 
-        ! D1(scaleENERr) -> phiR.VISC.yy  and  phiR.VISC.xx,zz
-                DO WITH derivs_standalone(iy):
+	        DO WITH derivs_standalone(iy):
                      rx = ix*rx0; rz = iz*rz0
-        ! yr-derivatives
-                     phiR(iy,ix,iz).VISC.yy = ~ -2*ni*D1(Vder(ix,iz,iy+(-2..2)).ux.REAL) ! Vder.ux.REAL==scaleENERr
+                     WITH phiR(iy,ix,iz).TURB, Vder(ix,iz,iy): xx =~+uy.REAL; yy =~+vy.REAL; zz =~+wy.REAL ! scale_turb(xx,yy,zz)
+                     WITH phiR(iy,ix,iz).MEAN, Vder(ix,iz,iy): xx =~+uz.REAL; zz =~+wz.REAL                ! scale_mean(xx,yy,zz)        
+                     WITH phiR(iy,ix,iz).VISC: yy = ~ -2*ni*D1(Vder(ix,iz,iy+(-2..2)).ux.REAL)             ! Vder.ux.REAL==scaleENERr
+#ifdef DIVERGENCE
+                     DIVphiR(iy,ix,iz).VISC = ~ -2*ni*D2(Vder(ix,iz,iy+(-2..2)).ux.REAL) ! Vder.ux.REAL==scaleENERr
+                     DIVphiR(iy,ix,iz).TURB = ~ +D1(Vder(ix,iz,iy+(-2..2)).vy.REAL)      ! Vder.vy.REAL==scaleTURB
+#endif
                      LOOP FOR ialfa=0 TO nx AND ibeta=-nz TO nz WITH V(ialfa,ibeta,iy):
                        E = EXP(I*ialfa*rx+I*ibeta*rz); uu_vv_ww_E = [NORM(u) + NORM(v) + NORM(w)]*E
 		       WITH phiR(iy,ix,iz).VISC:
-		         xx = ~ +(IF ialfa=0 THEN 4 ELSE 8)*ni * [I*alfa0*ialfa*uu_vv_ww_E].REAL
-		         zz = ~ +(IF ialfa=0 THEN 4 ELSE 8)*ni * [I*beta0*ibeta*uu_vv_ww_E].REAL ! XXX Can this be merged with scaleENER?
+                          C = IF ialfa=0 THEN 4 ELSE 8
+		         xx = ~ +C*ni*[I*alfa0*ialfa*uu_vv_ww_E].REAL
+		         zz = ~ +C*ni*[I*beta0*ibeta*uu_vv_ww_E].REAL ! XXX Can this be merged with scaleENER?
+#ifdef DIVERGENCE
+     DIVphiR(iy,ix,iz).VISC = ~ -C*ni*{[uu_vv_ww_E*(alfa0*ialfa)**2].REAL+[uu_vv_ww_E*(beta0*ibeta)**2].REAL}
+#endif
                      REPEAT
+#ifdef DIVERGENCE
+                     WITH DIVphiR(iy,ix,iz):
+                     IF ix=0 THEN TURB=~+dx0(uy); MEAN=~+dx0(uz) ELSE IF ix=nx_us THEN TURB=~+dxn(uy); MEAN=~+dxn(uz) ELSE TURB=~+dx(uy);  MEAN=~+dx(uz) END IF
+                     IF iz=-nz_us THEN TURB=~+dz0(wy); MEAN=~+dz0(wz) ELSE IF iz=nz_us THEN TURB=~+dzn(wy); MEAN=~+dzn(wz) ELSE TURB=~+dz(wy);  MEAN=~+dz(wz) END IF
+#endif
 		FOR ix=0 TO nx_us AND iz=-nz_us TO nz_us
           END IF 
         REPEAT planes
@@ -225,6 +239,9 @@ WITH phiR:
            TURB.xx=~/nftot; TURB.yy=~/nftot; TURB.zz=~/nftot; 
            VISC.xx=~/nftot; VISC.yy=~/nftot; VISC.zz=~/nftot; 
            MEAN.xx=~/nftot; MEAN.yy=~/nftot; MEAN.zz=~/nftot; 
+#ifdef DIVERGENCE
+WITH DIVphiR: MEAN=~/nftot; TURB=~/nftot; VISC=~/nftot
+#endif
 
 ! Caompute terms which need final differentiation (phiC.VISC)
 ! ----------------------------		
@@ -252,10 +269,9 @@ IF NOT first THEN READ FROM prev
 	fluximage=OPEN("phiR.dat")
 	LOOP FOR iy=miny TO maxy WITH fluximage:
 		phiRimage(iy) = phiR(iy)
+#ifdef DIVERGENCE
+             DIVphiRimage(iy) = DIVphiR(iy)
+#endif
 	REPEAT
 	CLOSE fluximage
 IF NOT last THEN WRITE TO next
-
-! Be polite and say Goodbye
-! ----------------------------
-WRITE "Goodbye, man!"
