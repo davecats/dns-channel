@@ -38,8 +38,8 @@ LOOP files FOR n=nfmin TO nfmax
     IF has_terminal THEN WRITE "Computing PSD and CSD"
     LOOP FOR ALL ix,iz,iy WITH psd(iy,ix,iz),V(ix,iz,iy):
         uu=~+1/alfa0/beta0*NORM[u];  vv=~+1/alfa0/beta0*NORM[v]
-        ww=~+1/alfa0/beta0*NORM[w];  uv=~+1/alfa0/beta0*ABS[v|u]
-        uw=~+1/alfa0/beta0*ABS[w|u]; vw=~+1/alfa0/beta0*ABS[w|v]
+        ww=~+1/alfa0/beta0*NORM[w];  uv=~+1/alfa0/beta0*[v|u].REAL
+        uw=~+1/alfa0/beta0*[w|u].REAL; vw=~+1/alfa0/beta0*[w|v].REAL
     REPEAT LOOP 
 REPEAT files
 
