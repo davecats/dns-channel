@@ -4,7 +4,7 @@
 %
 
 addpath ./base
-addpath ./EMD
+addpath ./emd
 
 % Read field file
 [U,Ubar,Wbar,dns]=veta2uvw('Field200.fld');
