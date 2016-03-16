@@ -1,0 +1,13 @@
+function [f]=plane_ifft(f,nx,nz)
+    
+    for ix=nx+1:2*nx+1
+        f(1,:,ix)=ifft(ifftshift(f(1,:,ix)))*(2*nz+1); 
+    end
+    for iz=1:2*nz+1
+        f(1,iz,:)=ifft( ...
+                      cat(3,f(1,iz,nx+1:end),conj(f(1,iz,2*nx+1:-1:nx+2))) ...
+                    )*(2*nx+1);
+                
+    end
+    
+end
