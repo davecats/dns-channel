@@ -13,11 +13,19 @@
 % Output :
 % emdc= empirical mode decomposition components, matrix(m*n*(N+1))
 
-function emdc=FABEMD(signal,parameter,fid,iy)
+function emdc=FABEMD(signal,parameter,verbose)
 
 % verification of the valitidy of the input parameter
 if (strcmp(parameter.type,'HD')==false && strcmp(parameter.type,'LD')==false && strcmp(parameter.type,'hD')==false)
     error('error in the Input argument type. Allowable values: HD or LD or hD')
+end
+
+if strcmp(parameter.type,'LD')
+    ws=@(a,b) 2*floor(min(min(a),min(b))/2)+1;
+elseif strcmp(parameter.type,'hD')
+    ws=@(a,b) 2*floor(min(max(a),max(b))/2)+1;
+elseif strcmp(parameter.type,'HD')
+    ws=@(a,b) 2*floor(max(max(a),max(b))/2)+1;
 end
 
 emdc=repmat(zeros(size(signal)),[1,1,parameter.n+1]);
@@ -32,19 +40,13 @@ for i=1:parameter.n
     while j<=parameter.MNAI
         tstart_tot=tic;
         % 2) upper and lower envelopes
-        [Xmax,Valmax]=maximum_local_BC(res); 
-        tstart=tic;[Xmin,Valmin]=minimum_local_BC(res);tmin=floor(toc(tstart));
-        [k_max,d_max]=knnsearch(Xmax,Xmax,'k',2); 
-        tstart=tic;[k_min,d_min]=knnsearch(Xmin,Xmin,'k',2);tdmin=floor(toc(tstart));
+        [Xmax,~]=maximum_local_BC(res); 
+        tstart=tic;[Xmin,~]=minimum_local_BC(res);tmin=floor(toc(tstart));
+        [~,d_max]=knnsearch(Xmax,Xmax,'k',2); 
+        tstart=tic;[~,d_min]=knnsearch(Xmin,Xmin,'k',2);tdmin=floor(toc(tstart));
         
         if (size(d_min,1)>=2 && size(d_max,1)>=2)
-            if parameter.type=='LD'
-                w=2*floor(min(min(d_max(:,2)),min(d_min(:,2)))/2)+1;
-            elseif parameter.type=='hD'
-                w=2*floor(min(max(d_max(:,2)),max(d_min(:,2)))/2)+1;
-            elseif parameter.type=='HD'
-                w=2*floor(max(max(d_max(:,2)),max(d_min(:,2)))/2)+1;
-            end
+            w = ws(d_max(:,2),d_min(:,2));
             
             if w<=w_old
                 w=2*floor(1.5*w_old/2)+1; 
@@ -61,7 +63,9 @@ for i=1:parameter.n
                 [Xmax,~]=maximum_local_BC(res);
                 [Xmin,~]=minimum_local_BC(res);
                 mean=sum(sum(res))/(size(res,1)*size(res,2));
-                %fprintf(fid,'%d\t%d\t%d\t%d\t%d\t%d\t%.1f\t%.3f\t%d\t%d\t%d\t%d\n',iy,i,j,w,size(Xmin,1),size(Xmax,1),toc(tstart_tot),mean,tmin,tdmin,tfilter,tsmin);
+                if verbose
+                  disp(iy,i,j,w,size(Xmin,1),size(Xmax,1),toc(tstart_tot),mean,tmin,tdmin,tfilter,tsmin);
+                end
                 j=j+1;
             else
                 emdc(:,:,i)=res;
@@ -81,3 +85,5 @@ for i=1:parameter.n
 end
 
 emdc(:,:,i+1)=residual;
+
+end

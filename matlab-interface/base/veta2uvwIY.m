@@ -23,33 +23,20 @@
 
 % =========================================================================
 
-function [data2,U,W,dns]=veta2uvw(filename)
-
-%   1) Rohdaten speichern
-% -------------------------------------------------------------------------
-[dns,U,W,data2]=import_fld(filename);
+function [U]=veta2uvwIY(U,Ubar,Wbar,y,dns)
 
 %   2) (u,w) aus (v,Eta) berechnen
 % -------------------------------------------------------------------------
-y=zeros(dns.ny+3,1);
-for i=1:dns.ny+3
-    y(i)=dns.ymin+0.5*(dns.ymax-dns.ymin)*(tanh(dns.a*(2*(i-2)/dns.ny-1))/tanh(dns.a)+0.5*(dns.ymax-dns.ymin));
-end
-disp('Converting (v,eta) --> (u,v,w)')
-for iy=2:dns.ny+2
-  data2(1,:,:,iy)=(data2(2,:,:,iy+1)-data2(2,:,:,iy-1))./(y(iy+1)-y(iy-1)); %dvdy
-end
+U(1,:,:,2)=(U(2,:,:,3)-U(2,:,:,1))./(y(3)-y(1)); %dvdy
 for ix=1:dns.nx+1
     alfa=(ix-1)*dns.alfa0;
     for iz=1:2*dns.nz+1
         beta=(iz-1-dns.nz)*dns.beta0; k2=alfa^2+beta^2;
-        for iy = 2:dns.ny+2
-          tmp = 1j*(alfa*data2(1,iz,dns.nx+ix,iy)-beta*data2(3,iz,dns.nx+ix,iy))/k2;
-          data2(3,iz,dns.nx+ix,iy)=1j*(beta*data2(1,iz,dns.nx+ix,iy)+alfa*data2(3,iz,dns.nx+ix,iy))/k2;
-          data2(1,iz,dns.nx+ix,iy)=tmp;
-        end
+        tmp = 1j*(alfa*U(1,iz,dns.nx+ix,2)-beta*U(3,iz,dns.nx+ix,2))/k2;
+        U(3,iz,dns.nx+ix,2)=1j*(beta*U(1,iz,dns.nx+ix,2)+alfa*U(3,iz,dns.nx+ix,2))/k2;
+        U(1,iz,dns.nx+ix,2)=tmp;
     end
 end
-data2(1,dns.nz+1,dns.nx+1,:)=U(:);
-data2(3,dns.nz+1,dns.nx+1,:)=W(:);
+U(1,dns.nz+1,dns.nx+1,2)=Ubar(2);
+U(3,dns.nz+1,dns.nx+1,2)=Wbar(2);
 
