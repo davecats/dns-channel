@@ -5,7 +5,7 @@
 
 % INPUT
 % ------------------------------
-file = '/home/davide/MATTEST/matlab-interface/Field20.fld';
+file = './Field1000.fld';
 Vdisk_fname  = './Field1.bin';
 EMD.fname = './EMD1.bin';
 EMD.type='hD';   
@@ -61,7 +61,7 @@ for i=0:dns.ny
     % Convert slice from (v,eta) to (u,v,w)
     U=veta2uvwIY(U,Ubar(iy-1:iy+1),Wbar(iy-1:iy+1),y(iy-1:iy+1),dns);
     % Convert to physical space 
-    U(1,:,:,2)=plane_ifft(U(1,:,:,2),dns.nx,dns.nz);
+    U(iV,:,:,2)=plane_ifft(U(iV,:,:,2),dns.nx,dns.nz);
     % Keep only central plane and convert to double
     U=real(U(:,:,:,2));
     % Empirical Mode Decomposition
