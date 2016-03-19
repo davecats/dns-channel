@@ -5,12 +5,13 @@
 
 % INPUT
 % ------------------------------
-file = './Field1000.fld';
-Vdisk_fname  = './Field1.bin';
-EMD.fname = './EMD1.bin';
+file = '/home/davide/MATTEST/matlab-interface/Field20.fld';
+Vdisk_fname  = './Field.bin';
+EMD.fname = './EMD.bin';
 EMD.type='hD';   
 EMD.n=1;         
 EMD.MNAI=1;
+fftw('planner','patient')
 % ------------------------------
 
 clc
@@ -49,6 +50,7 @@ for i=1:dns.ny+3
 end
 
 for i=0:dns.ny
+    tic
     % Update waitbar
     waitbar(i/dns.ny,h);
     % Define helping indices
@@ -61,7 +63,9 @@ for i=0:dns.ny
     % Convert slice from (v,eta) to (u,v,w)
     U=veta2uvwIY(U,Ubar(iy-1:iy+1),Wbar(iy-1:iy+1),y(iy-1:iy+1),dns);
     % Convert to physical space 
-    U(iV,:,:,2)=plane_ifft(U(iV,:,:,2),dns.nx,dns.nz);
+    for iV=1:3
+      U(iV,:,:,2)=plane_ifft(U(iV,:,:,2),dns.nx,dns.nz);
+    end
     % Keep only central plane and convert to double
     U=real(U(:,:,:,2));
     % Empirical Mode Decomposition
@@ -71,6 +75,7 @@ for i=0:dns.ny
     % Write the slice to disk
     Uimage.data.U(:,:,:,IY)=U;
     EMDimage.data.EMDC(:,:,:,IY)=EMDC;
+    toc
 end
 % Close waitbar
 close(h)
