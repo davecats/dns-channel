@@ -11,6 +11,8 @@ EMD.fname = './EMD.bin';
 EMD.type='hD';   
 EMD.n=1;         
 EMD.MNAI=1;
+PSD.fname = './PSD.bin';
+PSD.y = 0.075;
 fftw('planner','patient')
 nproc=2;
 % ------------------------------
@@ -25,7 +27,7 @@ addpath ./psd
 % Create vector on disk for velocity output
 fh = fopen(Vdisk_fname,'w'); 
 for iy=0:dns.ny
-  fwrite(fh,zeros(3,2*dns.nz+1,2*dns.nx+1),'double'); 
+ fwrite(fh,zeros(3,2*dns.nz+1,2*dns.nx+1),'double'); 
 end
 fclose(fh);
 Uimage=memmapfile(Vdisk_fname, ...
@@ -39,6 +41,16 @@ end
 fclose(fh);
 EMDimage=memmapfile(EMD.fname, ...
                  'Format', {'double' [2*dns.nz+1 2*dns.nx+1 EMD.n+1 dns.ny+1] 'EMDC'}, ...
+                 'Writable',true);
+% Create vector on disk for PSD and XCORR
+fh = fopen(PSD.fname,'w'); 
+for iy=0:dns.ny
+    fwrite(fh,zeros(2,2*dns.nz+1,2*dns.nx+1),'double'); 
+end
+fclose(fh);
+PSDimage=memmapfile(PSD.fname, ...
+                 'Format', {'double' [2*dns.nz+1 2*dns.nx+1 dns.ny+1] 'PSD';
+                            'double' [2*dns.nz+1 2*dns.nx+1 dns.ny+1] 'CORR'}, ...
                  'Writable',true);
              
 % Define y-coordinates
@@ -76,10 +88,21 @@ for i=0+floor((labindex-1)*(dns.ny+1)/numlabs):floor(labindex*(dns.ny+1)/numlabs
     EMDimage.data.EMDC(:,:,:,IY)=EMDC;
     toc
 end
+% Compute PSD and XCORR of large scale
+iy = find(y>=PSD.y,1,'first')-1; % reference plane
+EMDCiy=fft2(EMDimage.data.EMDC(:,:,1,iy))/(2*dns.nx+1)/(2*dns.nz+1);
+for i=0+floor((labindex-1)*(round(dns.ny/2)+1)/numlabs):floor(labindex*(round(dns.ny/2)+1)/numlabs)-1
+    IY=i+1;
+    EMDCIY=fft2(EMDimage.data.EMDC(:,:,1,IY))/(2*dns.nx+1)/(2*dns.nz+1);
+    PSDimage.data.CORR(:,:,IY)=...
+       ifftshift(real(ifft2(conj(EMDCiy).*EMDCIY)))*(2*dns.nx+1)*(2*dns.nz+1);
+    PSDimage.data.PSD(:,:,IY)=...
+       real(conj(EMDCiy).*EMDCIY);
+end
 end
 % Plot some large scale isosurfaces from disk!
 disp('Plotting some large-scale isosurfaces')
-EMDimage=EMDimage{1};
+EMDimage=EMDimage{1}; PSDimage=PSDimage{1};
 levels = [-1.2,0.8];
 figure(1); hold on; box on
 for lev=levels
