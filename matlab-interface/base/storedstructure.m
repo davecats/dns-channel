@@ -1,8 +1,9 @@
-function mmap=storedstructure(fname,field,writable,create)
+function mmap=storedstructure(fname,field,writable)
 
 FSIZE=0;
-for i=1:length(field{:,1})
-    switch field{i,end}
+for i=1:numel(field)/3
+    if numel(field)/3 == 1; c=field{1}; else c=field{i,1}; end
+    switch c
         case 'double'
             bs=8;
         case 'complex'
@@ -10,15 +11,21 @@ for i=1:length(field{:,1})
         case 'uint8'
             bs=1;
     end
-    FSIZE=FSIZE+bs*prod(field{i,2});
+    if numel(field)/3 == 1; s=field{2}; else s=field{i,2}; end
+    FSIZE=FSIZE+bs*prod(s);
 end
+CHUNKSIZE=100*1000
+FSIZE
 
-fh = fopen(fname,'w'); 
-for iy=0:dns.ny
-    fwrite(fh,zeros(2,2*dns.nz+1,2*dns.nx+1),'double'); 
+fh = fopen(fname,'r'); if fh>-1; fclose(fh); end
+if fh==-1
+    fh = fopen(fname,'w'); 
+    for i=CHUNKSIZE:CHUNKSIZE:FSIZE;
+        fwrite(fh,zeros(1,CHUNKSIZE),'uint8'); 
+    end
+    fwrite(fh,zeros(1,FSIZE-i),'uint8');
+    fclose(fh);
 end
-fclose(fh);
-PSDimage=memmapfile(PSD.fname, ...
-                 'Format', {'double' [2*dns.nz+1 2*dns.nx+1 dns.ny+1] 'PSD'; ...
-                            'double' [2*dns.nz+1 2*dns.nx+1 dns.ny+1] 'CORR'}, ...
-                 'Writable',true);
+mmap=memmapfile(fname, ...
+                 'Format', field, ...
+                 'Writable',writable);
