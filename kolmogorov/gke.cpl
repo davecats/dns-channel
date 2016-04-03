@@ -1,9 +1,9 @@
 
 ! 
-! Computes the source term, space and scale flux
+! Computes the source term, space and scale flux for ry=0
 ! in the generalized Kolmogorov equation specialized 
 ! for channel flow, as in Marati, Casciola, Piva, JFM 2004, 
-! equation 3.4 and following definitions.
+! equation 3.4 and following definitions. 
 ! 
 ! This program IS parallel with distributed memory support
 
@@ -30,7 +30,7 @@ FLUXVEC = STRUCTURE(REAL xx, yy, zz)
 SCALEFLUX = STRUCTURE(FLUXVEC TURB, MEAN, VISC)
 DIVSCALEFLUX = STRUCTURE(REAL TURB, MEAN, VISC) 
 SPACEFLUX = STRUCTURE(REAL TURB, PRES, VISC)
-MEANTERMS = STRUCTURE(REAL U,W,Uy,Wy,Uyy,Wyy) ! tke.cpl (with small letters for later convenience)
+MEANTERMS = STRUCTURE(REAL U,W,Uy,Wy,Uyy,Wyy) ! tke.cpl 
 TKETERMS = STRUCTURE(REAL PROD,PDISS,TDIFF,PDIFF,VDIFF,PHI_TDIFF,PHI_PDIFF,PHI_VDIFF) ! tke.cpl
 MKETERMS = STRUCTURE(REAL MPROD,TPROD,TMDIF,MMDIF,DISSu,DISSw,PHI_TMDIF,PHI_MMDIF) ! tke.cpl
 
@@ -69,7 +69,7 @@ IF NOT first THEN READ FROM prev
         CLOSE(tkeimage)
 IF NOT last THEN WRITE TO next
 
-IF has_terminal THEN WRITE "Computing Kolmogorov Equation: go get a coffee..."
+IF has_terminal THEN WRITE "Computing Kolmogorov Equation..."
 ! Compute Kolmogorov Equation
 ! -------------------------------
 LOOP files FOR if=nfmin TO nfmax BY dn
@@ -141,7 +141,7 @@ LOOP files FOR if=nfmin TO nfmax BY dn
         REPEAT planes
 REPEAT files
 
-! Ensemble averaging (phiC,scalePROD,scaleENER)
+! Ensemble averaging
 ! ----------------------------
 WITH phiC: scalePROD=~/nftot; scaleENER=~/nftot; PRES=~/nftot; TURB=~/nftot;
 WITH phiR: 
