@@ -1,0 +1,179 @@
+
+! 
+! Computes the source term and the geometric space flux
+! in the generalized Kolmogorov equation specialized 
+! for channel flow, as in Marati, Casciola, Piva, JFM 2004, 
+! equation 3.4 and following definitions.
+! 
+ 
+! This program IS parallel with distributed memory support
+
+gamma=0
+outinterv=0
+USE ../dnsdata
+USE ../dnsdirect
+USE ../tke/convenience
+!USE rtchecks
+WRITE BY NAME 2*nxd,nzd
+
+! Parameters
+! -----------------------------
+nfmin=1001
+nfmax=5001
+dn=1000
+! -----------------------------
+INTEGER nftot=[(nfmax-nfmin) DIV dn]+1
+INLINE INTEGER FUNCTION izd(INTEGER iz)=IF iz>=0 THEN iz ELSE nzd+iz
+
+! Definitions
+! -----------------------------
+FLUXVEC = STRUCTURE(REAL xx, yy, zz)
+SCALEFLUX = STRUCTURE(FLUXVEC TURB, MEAN, VISC)
+DIVSCALEFLUX = STRUCTURE(REAL TURB, MEAN, VISC) 
+SPACEFLUX = STRUCTURE(REAL TURB, PRES, VISC)
+MEANTERMS = STRUCTURE(REAL U,W,Uy,Wy,Uyy,Wyy) ! tke.cpl (with small letters for later convenience)
+TKETERMS = STRUCTURE(REAL PROD,PDISS,TDIFF,PDIFF,VDIFF,PHI_TDIFF,PHI_PDIFF,PHI_VDIFF) ! tke.cpl
+MKETERMS = STRUCTURE(REAL MPROD,TPROD,TMDIF,MMDIF,DISSu,DISSw,PHI_TMDIF,PHI_MMDIF) ! tke.cpl
+
+ARRAY(nyl-2..nyh+2,0..2*nxd-1,0..nzd-1) OF REAL scalePROD=0
+ARRAY(nyl-2..nyh+2) OF REAL scaleDISS=0
+ARRAY(nyl-2..nyh+2,0..2*nxd-1,0..nzd-1) OF REAL scaleENER=0
+ARRAY(nyl-2..nyh+2,0..2*nxd-1,0..nzd-1) OF SPACEFLUX phiC=0
+ARRAY(nyl-2..nyh+2,0..2*nxd-1,0..nzd-1) OF SCALEFLUX phiR=0
+ARRAY(nyl-2..nyh+2) OF MEANTERMS meandata=0
+
+ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) OF COMPLEX p=0
+POINTER TO ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) OF DERIVS Vder
+
+USE ../energy-box/poisson_solver_parallel
+
+POINTER TO STORED STRUCTURE[
+	ARRAY(-1..ny+1,0..2*nxd-1,0..nzd-1) OF REAL scalePRODimage
+        ARRAY(-1..ny+1) OF REAL scaleDISSimage
+	ARRAY(-1..ny+1,0..2*nxd-1,0..nzd-1) OF REAL scaleENERimage
+] sourceimage
+
+POINTER TO STORED ARRAY(-1..ny+1,0..2*nxd-1,0..nzd-1) OF SCALEFLUX phiRimage
+POINTER TO STORED ARRAY(-1..ny+1,0..2*nxd-1,0..nzd-1) OF SPACEFLUX phiCimage
+
+! Load MEANTERMS and TKETERMS
+! ------------------------------
+POINTER TO STORED STRUCTURE[
+        ARRAY(-1..ny+1) OF MEANTERMS meandataimage
+        ARRAY(-1..ny+1) OF TKETERMS tkedataimage
+        ARRAY(-1..ny+1) OF MKETERMS mkedataimage
+] tkeimage
+
+IF NOT first THEN READ FROM prev
+        tkeimage=OPEN("tke.bin")
+        WITH tkeimage: meandata=meandataimage(nyl-2..nyh+2); scaleDISS=-4*tkedataimage(nyl-2..nyh+2).PDISS
+        CLOSE(tkeimage)
+IF NOT last THEN WRITE TO next
+
+IF has_terminal THEN WRITE "Computing Kolmogorov Equation: go get a coffee..."
+! Compute Kolmogorov Equation
+! -------------------------------
+LOOP files FOR if=nfmin TO nfmax BY dn
+        ! Loading data
+        STRING field_name = WRITE("Field"if".fld")
+        read_field_parallel(field_name); V(0,0,*)=0
+        ! Derivatives and pressure
+        NEW Vder; Vder=0; compute_pressure(Vder,p); FREE(Vder)
+        LOOP planes FOR iyc=nyl TO nyh
+        ! Compute phiR.VISC and scaleENER
+          ARRAY(-2..2,0..nxd-1,0..nzd-1) OF COMPLEX scaleENERy=0
+          LOOP dplanes FOR ry=-2 TO 2        
+            ARRAY(0..nxd-1,0..nzd-1) OF STRUCTURE(COMPLEX uu,vv,ww) G=0
+            LOOP FOR ix = 0 TO nx
+              DO WITH V(ix,iz,iyc+ry), G(ix,iz):     uu=u|u; vv=v|v; ww=w|w FOR iz=0 TO nz
+              DO WITH V(ix,iz,iyc+ry), G(ix,nzd+iz): uu=u|u; vv=v|v; ww=w|w FOR iz=-nz TO -1
+              WITH G(ix,*): IFT(uu); IFT(vv); IFT(ww)
+            REPEAT LOOP
+            DO WITH G(*,iz): RFT(uu); RFT(vv); RFT(ww) FOR ALL iz 
+            DO WITH G(ix,iz): 
+              scaleENERy(ry,ix,iz).REAL=2*G(0,0).uu.REAL-2*uu.REAL+2*G(0,0).vv.REAL-2*vv.REAL+2*G(0,0).ww.REAL-2*ww.REAL 
+              scaleENERy(ry,ix,iz).IMAG=2*G(0,0).uu.REAL-2*uu.IMAG+2*G(0,0).vv.REAL-2*vv.IMAG+2*G(0,0).ww.REAL-2*ww.IMAG 
+            FOR ix=0 TO nxd-1 AND iz=0 TO nzd-1
+          REPEAT dplanes
+          DO scaleENER(iyc,ix,iz)=~+scaleENERy(0,*,iz).REALIFIED(ix) FOR ix=0 TO 2*nxd-1 AND iz=0 TO nzd-1
+          DO WITH phiR(iyc,ix,iz).VISC, derivs_standalone(iyc): yy = ~ -2*ni*[SUM d1(i)*scaleENERy(i,*,iz).REALIFIED(ix) FOR i=-2 TO 2] FOR ALL iz AND ix=0 TO 2*nxd-1
+          scaleENERy(-2..-1,*,*)=0          
+          DO HFT(scaleENERy(0,*,iz)) FOR ALL iz
+          DO 
+            FFT(scaleENERy(0,ix,*)) 
+            DO scaleENERy(-1,ix,iz)=I*alfa0*ix*scaleENERy(0,ix,iz);         scaleENERy(-2,ix,iz)=I*beta0*iz*scaleENERy(0,ix,iz); FOR iz=0 TO nz
+            DO scaleENERy(-1,ix,nzd+iz)=I*alfa0*ix*scaleENERy(0,ix,nzd+iz); scaleENERy(-2,ix,nzd+iz)=I*beta0*iz*scaleENERy(0,ix,nzd+iz); FOR iz=-nz TO -1
+            IFT(scaleENERy(-2,ix,*)); IFT(scaleENERy(-1,ix,*))
+          FOR ix=0 TO nx 
+          DO RFT(scaleENERy(-2,*,iz)); RFT(scaleENERy(-1,*,iz)) FOR ALL iz
+          DO WITH phiR(iyc,ix,iz).VISC: 
+            xx = ~ -2*ni*scaleENERy(-1,*,iz).REALIFIED(ix) 
+            zz = ~ -2*ni*scaleENERy(-2,*,iz).REALIFIED(ix)
+          FOR ALL iz AND ix=0 TO 2*nxd-1
+        ! All other terms
+          ARRAY(0..nxd-1,0..nzd-1) OF STRUCTURE(COMPLEX vu,pv,uuu,uuv,uuw,vvu,vvv,vvw,wwu,wwv,www,uvu,uvv,uwu,uww,vwv,vww) R=0
+          convolutions(V(*,*,iyc),VVd(*,*,2))
+          LOOP FOR ix = 0 TO nx
+            DO WITH V(ix,iz,iyc), VVd(ix,iz,2), R(ix,iz):  
+              uuu=u|uu;  uuv=v|uu;  uuw=w|uu;  vvu=u|vv;  vvv=v|vv;  vvw=w|vv;   wwu=u|ww;  wwv=v|ww;  www=w|ww;
+              uvu=u|uv;  uvv=v|uv;  uwu=u|uw;  uww=w|uw;  vwv=v|vw;  vww=w|vw;   vu=v|u;   pv=p(ix,iz,iyc)|v
+            FOR iz=0 TO nz
+            DO WITH V(ix,iz,iyc), VVd(ix,nzd+iz,2), R(ix,nzd+iz):  
+              uuu=u|uu;  uuv=v|uu;  uuw=w|uu;  vvu=u|vv;  vvv=v|vv;  vvw=w|vv;   wwu=u|ww;  wwv=v|ww;  www=w|ww;
+              uvu=u|uv;  uvv=v|uv;  uwu=u|uw;  uww=w|uw;  vwv=v|vw;  vww=w|vw;   vu=v|u;   pv=p(ix,iz,iyc)|v
+            FOR iz=-nz TO -1
+            WITH R(ix,*): IFT(uuu); IFT(uuv); IFT(uuw); IFT(vvu); IFT(vvv); IFT(vvw); IFT(vu);  IFT(pv);
+            WITH R(ix,*): IFT(wwu); IFT(wwv); IFT(www); IFT(uvu); IFT(uvv); IFT(uwu); IFT(uww); IFT(vwv); IFT(vww);
+          REPEAT LOOP
+          DO WITH R(*,iz): 
+            RFT(uuu); RFT(uuv); RFT(uuw); RFT(vvu); RFT(vvv); RFT(vvw); RFT(wwu); 
+            RFT(wwv); RFT(www); RFT(uvu); RFT(uvv); RFT(uwu); RFT(uww); RFT(vwv); RFT(vww); RFT(vu); RFT(pv);
+          FOR ALL iz 
+          DO WITH phiR(iyc,ix,iz).TURB, phiC(iyc,ix,iz),  meandata(iyc):
+#define pR(f) R(*,iz).f.REALIFIED(ix)
+#define mR(f) R(*,nzd-1-iz).f.REALIFIED(2*nxd-1-ix)
+            xx   = ~ + 3*mR(uuu) - 3*pR(uuu) + mR(vvu) -2*pR(uvv) -pR(vvu) + 2*mR(uvv) + mR(wwu) -2*pR(uww) -pR(wwu) + 2*mR(uww)
+            yy   = ~ + 3*mR(vvv) - 3*pR(vvv) + mR(uuv) -2*pR(uvu) -pR(uuv) + 2*mR(uvu) + mR(wwv) -2*pR(vww) -pR(wwv) + 2*mR(vww)
+            zz   = ~ + 3*mR(www) - 3*pR(www) + mR(uuw) -2*pR(uwu) -pR(uuw) + 2*mR(uwu) + mR(vvw) -2*pR(vwv) -pR(vvw) + 2*mR(vwv)
+            TURB = ~ + 0.5*[ 2*R(*,0).uuv.REALIFIED(0) + pR(uuv) + mR(uuv) -2*pR(uvu) -2*mR(uvu) ]
+            PRES = ~ + 2*[ 2*R(*,0).pv.REALIFIED(0) - pR(pv) - mR(pv) ]
+            scalePROD(iyc,ix,iz) = ~ -2*[ 2*R(*,0).vu.REALIFIED(0) - pR(vu) - mR(vu)]*Uy
+          FOR ix=0 TO 2*nxd-1 AND iz=0 TO nzd-1      
+        REPEAT planes
+REPEAT files
+
+! Ensemble averaging (phiC,scalePROD,scaleENER)
+! ----------------------------
+WITH phiC: scalePROD=~/nftot; scaleENER=~/nftot; PRES=~/nftot; TURB=~/nftot;
+WITH phiR: 
+           TURB.xx=~/nftot; TURB.yy=~/nftot; TURB.zz=~/nftot; 
+           VISC.xx=~/nftot; VISC.yy=~/nftot; VISC.zz=~/nftot; 
+           MEAN.xx=~/nftot; MEAN.yy=~/nftot; MEAN.zz=~/nftot; 
+
+! Caompute terms which need final differentiation (phiC.VISC)
+! ----------------------------		
+DO WITH phiC(iyc,ix,iz), derivs_standalone(iyc):
+  VISC = -0.5*ni*[SUM d1(i)*scaleENER(iyc+i,ix,iz) FOR i=-2 TO 2]
+FOR iyc=nyl TO nyh AND ix=0 TO 2*nxd-1 AND iz=0 TO nzd-1
+
+! Saving to disk
+! ----------------------------
+IF has_terminal THEN WRITE "Saving results to disk..."
+IF NOT first THEN READ FROM prev
+	sourceimage=OPEN("source.dat")
+	LOOP FOR iy=miny TO maxy WITH sourceimage:
+		scalePRODimage(iy)=scalePROD(iy)
+                scaleDISSimage(iy)=scaleDISS(iy)
+	REPEAT
+	CLOSE sourceimage
+	phiCimage=OPEN("phiC.dat")
+	LOOP FOR iy=miny TO maxy
+		phiCimage(iy) = phiC(iy)
+	REPEAT
+	CLOSE phiCimage
+	phiRimage=OPEN("phiR.dat")
+	LOOP FOR iy=miny TO maxy
+		phiRimage(iy) = phiR(iy)
+	REPEAT
+	CLOSE phiRimage
+IF NOT last THEN WRITE TO next
