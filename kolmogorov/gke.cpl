@@ -1,11 +1,10 @@
 
 ! 
-! Computes the source term and the geometric space flux
+! Computes the source term, space and scale flux
 ! in the generalized Kolmogorov equation specialized 
 ! for channel flow, as in Marati, Casciola, Piva, JFM 2004, 
 ! equation 3.4 and following definitions.
 ! 
- 
 ! This program IS parallel with distributed memory support
 
 gamma=0
