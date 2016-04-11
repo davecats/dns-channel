@@ -20,12 +20,21 @@ with open ('dns.in','r') as in_data:
           .replace('yes','True').replace('=no','=False')\
           .replace("./Dati.cart.out","""str('./dati.cart.out')""")
 dns_in={}; exec(data, globals(), dns_in);
-nx = dns_in['nx']; nz = dns_in['nz']; ny = dns_in['ny']
-alfa0=dns_in['alfa0']; beta0=dns_in['beta0']; a = dns_in['a']
+nx = int(dns_in['nx']); nz = int(dns_in['nz']); ny = dns_in['ny']
+alfa0=dns_in['alfa0'];  beta0=dns_in['beta0'];  a = dns_in['a']
 
 # Index conversion
 izd = lambda i: i+nz
 iyd = lambda i: i+1
+
+# Find nxd,nzd
+nxd=3*nx//2-1; nzd=3*nz-1;
+def fftfit(x):
+  while not x & 1:
+    x = x >> 1
+  return (x==1 or x==3)
+while not fftfit(nxd): nxd += 1 
+while not fftfit(nzd): nzd += 1 
 
 # Set grid
 y = np.tanh(a*(2*np.arange(-1,ny+2)/ny-1))/np.tanh(a)+1

@@ -52,7 +52,7 @@ for i=0+floor((labindex-1)*(dns.ny+1)/numlabs):floor(labindex*(dns.ny+1)/numlabs
     U(2:3,:,dns.nx+1:2*dns.nx+1,:)=complex(VDisk.data.V(1,:,:,:,iy-1:iy+1),...
                                            VDisk.data.V(2,:,:,:,iy-1:iy+1));
     % Convert slice from (v,eta) to (u,v,w)
-    U=veta2uvwIY(U,Ubar(iy-1:iy+1),Wbar(iy-1:iy+1),y(iy-1:iy+1),dns);
+    U(:,:,:,2)=veta2uvwIY(U,Ubar(iy-1:iy+1),Wbar(iy-1:iy+1),y(iy-1:iy+1),dns);
     % Convert to physical space 
     for iV=1:3
       U(iV,:,:,2)=plane_ifft(U(iV,:,:,2),dns.nx,dns.nz);

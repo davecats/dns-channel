@@ -108,7 +108,7 @@ LOOP files FOR if=nfmin TO nfmax
                         	E = Ialfa0ialfa*rx0*ix
                         	LOOP FOR iz=-nz DIV us TO nz DIV us
                                         E  = ~+Ibeta0ibeta*rz0*iz;
-                                        E  = (2-EXP(E)-EXP(E))
+                                        E  = (2-EXP(E)-EXP(-E))
 	scale_source(iy,ix,iz).prod = ~ + 2*[ E * uv ].REAL * -2*dUdy(iy)
         scale_energy(iy,ix,iz)      = ~ + 2*[ E * uu ].REAL +
                                           2*[ E * vv ].REAL +

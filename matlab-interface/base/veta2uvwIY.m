@@ -37,6 +37,7 @@ for ix=1:dns.nx+1
         U(1,iz,dns.nx+ix,2)=tmp;
     end
 end
-U(1,dns.nz+1,dns.nx+1,2)=Ubar(2);
-U(3,dns.nz+1,dns.nx+1,2)=Wbar(2);
+U=U(:,:,:,2);
+U(1,dns.nz+1,dns.nx+1)=Ubar(2);
+U(3,dns.nz+1,dns.nx+1)=Wbar(2);
 
