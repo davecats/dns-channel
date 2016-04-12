@@ -1,6 +1,6 @@
 #!/bin/python3
 # ----------------
-from  dnsdata           import *
+from  dnsdata  import *
 from  scipy.interpolate import interp2d,interpn
 # MATPLOTLIB 3D
 from skimage import measure
@@ -14,8 +14,8 @@ from vispy import app,scene
 #
 # Reads the data produced by gke.cpl and plots the results
 #
-# This program is NOT parallel but can use storedstructures to 
-# reduce memory requirements.
+# This program is NOT parallel but could use storedstructures  
+# in future to reduce memory requirements.
 #
 
 
@@ -23,12 +23,13 @@ from vispy import app,scene
 # ----------------
 path = './dat/'
 averagey = True
-isoplot = True
+isoplot = False
 streamplot = False
+exportTEC = True
 U=1
 # ----------------
 rx = np.linspace(0,2.*pi/alfa0,2*nxd)
-rz = np.linspace(-2*pi/beta0,2.*pi/beta0,nzd)
+rz = np.linspace(0,4.*pi/beta0,nzd)
 # --- helper function to plot streamlines ---
 def plotstreamlines(x,y,u,v,density=1,nx=100,ny=100):
   xx,yy = np.linspace(x.min(),x.max(),nx), np.linspace(y.min(),y.max(),ny)
@@ -44,12 +45,7 @@ FLUXVEC   = np.dtype([('xx', np.float64), ('yy', np.float64), ('zz', np.float64)
 SCALEFLUX = np.dtype([('TURB', FLUXVEC), ('MEAN', FLUXVEC), ('VISC', FLUXVEC)])
 SPACEFLUX = np.dtype([('TURB', np.float64), ('PRES', np.float64), ('VISC', np.float64)])
 
-# Load already postprocessed data, if present
 try:
-    psd = np.load('XXXXXXX.npy','r')
-    
-# Otherwise read results
-except IOError:
     # Read source/sink terms
     with open (path+'source.dat','r') as source_file:
       source = np.fromfile(source_file,np.float64,(ny+3)*(2*nxd)*(nzd)).reshape(ny+3,2*nxd,nzd)
@@ -75,7 +71,7 @@ except IOError:
           phiR[1:iyd(int(ny/2)),:,:][term][cord] *= 0.5           
     # Remove top half
       source, sink = source[0:iyd(int(ny/2))+1], sink[0:iyd(int(ny/2))+1]
-      phiC, phiR, y = phiC[0:iyd(int(ny/2))+1], phiR[0:iyd(int(ny/2))+1], y[0:iyd(ny/2)+1]
+      phiC, phiR, y = phiC[0:iyd(int(ny/2))+1], phiR[0:iyd(int(ny/2))+1], y[0:iyd(int(ny/2))+1]
     # Compute total flux
     phi = np.zeros(np.shape(source),FLUXVEC)
     for term in SCALEFLUX.names:
@@ -83,7 +79,8 @@ except IOError:
         phi[...][cord] += phiR[...][term][cord]
     for term in SPACEFLUX.names:
       phi[...]['yy'] += phiC[...][term]
-    # Saving results
+except IOError:
+    print('I/O Error: do your files exist?')
     
 
 # Contour plot (rz,Yx)-space
@@ -104,6 +101,16 @@ plt.colorbar(cax)
 if streamplot: plotstreamlines(rx[0:nxd],y,phi[:,0:nxd,0]['xx'],phi[:,0:nxd,0]['yy'],nx=300,ny=300,density=5)
 plt.xlabel(r'$r_x$')
 plt.ylabel(r'$Y_c$')
+
+# Export Tecplot data
+# --------------------------
+if exportTEC:
+  with open(path+'gke.dat', "w") as tecFile:
+    print('VARIABLES="rx" "rz" "Yc" "source" "prod" "diss" "phi.xx" "phi.yy" "phi.zz"', file=tecFile)
+    print('ZONE I=',nxd,',J=',nzd//2,',K=',np.size(y)-1,' F=POINT', file=tecFile)
+    for (i,j,k) in [(i,j,k) for k in range(1,np.size(y)) for j in range(0,nzd//2) for i in range(0,nxd) ]:
+      print( rx[i],rz[j],y[k],(source[k,i,j]+sink[k,0,0]),source[k,i,j],sink[k,0,0],
+             phi[k,i,j]['xx'],phi[k,i,j]['yy'],phi[k,i,j]['zz'], file=tecFile, sep=' ' )
 
 
 # Surface PLOTS
@@ -132,7 +139,6 @@ if isoplot:
     axis=scene.visuals.XYZAxis(parent=view.scene)
     cam=scene.TurntableCamera(elevation=30., azimuth=60.,distance=50.0)
     view.camera=cam
-
 
 # Show all plots
 # --------------------------
