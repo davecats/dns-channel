@@ -79,13 +79,13 @@ LOOP forward WHILE time < t_max-deltat/2
        LOOP FOR ix=ismp*(nx+1) DIV nsmp TO (ismp+1)*(nx+1) DIV nsmp -1
          DO 
              Vd(ix,iz).u=[SUM d140(i)*V(ix,iz,i+1).u FOR i=-2 TO 2] 
-             Vd(ix,iz).v=V(ix,iz,ny).v
+             Vd(ix,iz).v=V(ix,iz,0).v
              Vd(ix,iz).w=[SUM d140(i)*V(ix,iz,i+1).w FOR i=-2 TO 2] 
          FOR iz=0 TO nz
          Vd(ix,nz+1..nzd-nz-1)=0
          DO 
              Vd(ix,nzd+iz).u=[SUM d140(i)*V(ix,iz,i+1).u FOR i=-2 TO 2] 
-             Vd(ix,nzd+iz).v=V(ix,iz,ny).v
+             Vd(ix,nzd+iz).v=V(ix,iz,0).v
              Vd(ix,nzd+iz).w=[SUM d140(i)*V(ix,iz,i+1).w FOR i=-2 TO 2] 
          FOR iz=-nz TO -1
          WITH Vd(ix,*): IFTU(u); IFTU(v); IFTU(w);
