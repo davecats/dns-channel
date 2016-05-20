@@ -1,0 +1,182 @@
+!#define bodyforce
+!#define passivescal
+outinterv=0
+REAL gamma
+USE dnsdata
+USE dnsdirect
+read_restart_file
+USE rtchecks
+
+FILE pow_file; IF has_terminal THEN pow_file=CREATE("Powerdata")
+REAL p0,pn
+REAL A; INTEGER nyp
+FILE in_parameters=OPEN("parameters_vcontrol.in")
+READ BY NAME FROM in_parameters A, nyp, gamma
+IF has_terminal THEN WRITE BY NAME A, nyp, gamma
+
+IF (first AND nyp>nyh) OR (last AND ny-nyp<nyl) THEN 
+    ERROR "the sensing slice must be allocated to the first or last machine"
+END IF
+
+INLINE FUNCTION D20(ARRAY(*) OF COMPLEX f)=d240(-2)*f(-1)+d240(-1)*f(0)+d240(0)*f(1)+d240(1)*f(2)+d240(2)*f(3)
+COMPLEX FUNCTION calcp0v(INTEGER ix,iz; COMPLEX vdudy, vdwdy)
+  alfa=alfa0*ix; beta=beta0*iz
+  ialfa==I*alfa; ibeta==I*beta
+  k2=alfa^2+beta^2
+  WITH V(ix,iz)
+  IF k2>0 THEN
+    RESULT=-ni/k2*[ialfa*D20(u)+ibeta*D20(w)]+[ialfa*vdudy+ibeta*vdwdy]/k2
+  ELSE
+    RESULT=0
+  END IF
+END calcp0v
+INLINE FUNCTION D2n(ARRAY(*) OF COMPLEX f)=d24n(-2)*f(ny-3)+d24n(-1)*f(ny-2)+d24n(0)*f(ny-1)+d24n(1)*f(ny)+d24n(2)*f(ny+1)
+COMPLEX FUNCTION calcpnv(INTEGER ix,iz; COMPLEX vdudy, vdwdy)
+  alfa=alfa0*ix; beta=beta0*iz
+  ialfa==I*alfa; ibeta==I*beta
+  k2=alfa^2+beta^2
+  WITH V(ix,iz)
+  IF k2>0 THEN
+    RESULT=-ni/k2*[ialfa*D2n(u)+ibeta*D2n(w)]+[ialfa*vdudy+ibeta*vdwdy]/k2
+  ELSE
+    RESULT=0
+  END IF
+END calcpnv
+
+outstats();
+LOOP forward WHILE time < t_max-deltat/2
+
+  IF first THEN
+    PARALLEL LOOP FOR ismp=0 TO nsmp-1
+      LOOP FOR ix=ismp*(nx+1) DIV nsmp TO (ismp+1)*(nx+1) DIV nsmp -1
+        DO WITH V(ix,iz,nyp): bc0(ix,iz).v=-A*v; FOR ALL iz
+      REPEAT
+    REPEAT
+  END IF
+  IF last THEN
+    PARALLEL LOOP FOR ismp=0 TO nsmp-1
+      LOOP FOR ix=ismp*(nx+1) DIV nsmp TO (ismp+1)*(nx+1) DIV nsmp -1 
+        DO WITH V(ix,iz,ny-nyp): bcn(ix,iz).v=-A*v; FOR ALL iz
+      REPEAT
+    REPEAT
+  END IF
+
+
+  time=~+2/RK1_rai_coeff*deltat
+  buildrhs(RK1_rai);linsolve(RK1_rai_coeff/deltat)
+  vetaTOuvw; computeflowrate(RK1_rai_coeff/deltat)
+  time=~+2/RK2_rai_coeff*deltat
+  buildrhs(RK2_rai);linsolve(RK2_rai_coeff/deltat)
+  vetaTOuvw; computeflowrate(RK2_rai_coeff/deltat)
+  time=~+2/RK3_rai_coeff*deltat
+  buildrhs(RK3_rai);linsolve(RK3_rai_coeff/deltat)
+  vetaTOuvw; computeflowrate(RK3_rai_coeff/deltat)
+  outstats()
+
+  IF first THEN 
+   SHARED ARRAY(0..nxd-1,0..nzd-1) OF STRUCTURE(COMPLEX pin0,p,vuy0,vwy0) poisson
+   PARALLEL LOOP FOR ismp=0 TO nsmp-1
+       LOOP FOR ix=ismp*(nx+1) DIV nsmp TO (ismp+1)*(nx+1) DIV nsmp -1
+         DO 
+             Vd(ix,iz).u=[SUM d140(i)*V(ix,iz,i+1).u FOR i=-2 TO 2] 
+             Vd(ix,iz).v=V(ix,iz,ny).v
+             Vd(ix,iz).w=[SUM d140(i)*V(ix,iz,i+1).w FOR i=-2 TO 2] 
+         FOR iz=0 TO nz
+         Vd(ix,nz+1..nzd-nz-1)=0
+         DO 
+             Vd(ix,nzd+iz).u=[SUM d140(i)*V(ix,iz,i+1).u FOR i=-2 TO 2] 
+             Vd(ix,nzd+iz).v=V(ix,iz,ny).v
+             Vd(ix,nzd+iz).w=[SUM d140(i)*V(ix,iz,i+1).w FOR i=-2 TO 2] 
+         FOR iz=-nz TO -1
+         WITH Vd(ix,*): IFTU(u); IFTU(v); IFTU(w);
+       REPEAT
+       IF ismp=0 THEN Vd(nx+1..nxd-1)=0
+       SYNC(ismp,nsmp)
+       DO
+         WITH Vd(*,iz): RFTU(u); RFTU(v); RFTU(w)
+         DO WITH Vd(ix,iz), poisson(ix,iz)
+           vuy0.REAL=Vd(ix,iz).v.REAL*Vd(ix,iz).u.REAL; vuy0.IMAG=Vd(ix,iz).v.IMAG*Vd(ix,iz).u.IMAG
+           vwy0.REAL=Vd(ix,iz).v.REAL*Vd(ix,iz).w.REAL; vwy0.IMAG=Vd(ix,iz).v.IMAG*Vd(ix,iz).w.IMAG
+         FOR ALL ix
+         WITH poisson(*,iz): HFTU(vuy0); HFTU(vwy0);
+       FOR iz=ismp*(HI+1) DIV nsmp TO (ismp+1)*(HI+1) DIV nsmp -1
+       SYNC(ismp,nsmp)
+       DO 
+         WITH poisson(ix,*): FFTU(vuy0); FFTU(vwy0);
+         DO WITH poisson(ix,iz): p=calcp0v(ix,iz,vuy0,vwy0) FOR iz=0 TO nz
+         DO WITH poisson(ix,nzd+iz): p=calcp0v(ix,iz,vuy0,vwy0) FOR iz=-nz TO -1
+         poisson(ix,nz+1..nzd-nz-1)=0
+         WITH poisson(ix,*): IFTU(p)
+       FOR ix=ismp*(nx+1) DIV nsmp TO (ismp+1)*(nx+1) DIV nsmp -1
+       IF ismp=0 THEN poisson(nx+1..nxd-1)=0
+       SYNC(ismp,nsmp)
+       DO
+         WITH poisson(*,iz): RFTU(p)
+         DO WITH poisson(ix,iz), Vd(ix,iz):
+           pin0.REAL=v.REAL*p.REAL + 0.5*v.REAL^3
+           pin0.IMAG=v.IMAG*p.IMAG + 0.5*v.IMAG^3
+         FOR ALL ix
+         WITH poisson(*,iz): HFTU(pin0)
+       FOR iz=ismp*(HI+1) DIV nsmp TO (ismp+1)*(HI+1) DIV nsmp -1
+       SYNC(ismp,nsmp)
+       DO WITH poisson(ix,*): FFTU(pin0) FOR ix=ismp*(nx+1) DIV nsmp TO (ismp+1)*(nx+1) DIV nsmp -1
+   REPEAT
+   p0=poisson(0,0).pin0.REAL
+  END IF
+
+  IF last THEN 
+   SHARED ARRAY(0..nxd-1,0..nzd-1) OF STRUCTURE(COMPLEX pinn,p,vuyn,vwyn) poisson
+   PARALLEL LOOP FOR ismp=0 TO nsmp-1
+       LOOP FOR ix=ismp*(nx+1) DIV nsmp TO (ismp+1)*(nx+1) DIV nsmp -1
+         DO 
+             Vd(ix,iz).u=[SUM d14n(i)*V(ix,iz,ny-1+i).u FOR i=-2 TO 2] 
+             Vd(ix,iz).v=V(ix,iz,ny).v
+             Vd(ix,iz).w=[SUM d14n(i)*V(ix,iz,ny-1+i).w FOR i=-2 TO 2] 
+         FOR iz=0 TO nz
+         Vd(ix,nz+1..nzd-nz-1)=0
+         DO 
+             Vd(ix,nzd+iz).u=[SUM d14n(i)*V(ix,iz,ny-1+i).u FOR i=-2 TO 2] 
+             Vd(ix,nzd+iz).v=V(ix,iz,ny).v
+             Vd(ix,nzd+iz).w=[SUM d14n(i)*V(ix,iz,ny-1+i).w FOR i=-2 TO 2] 
+         FOR iz=-nz TO -1
+         WITH Vd(ix,*): IFTU(u); IFTU(v); IFTU(w);
+       REPEAT
+       IF ismp=0 THEN Vd(nx+1..nxd-1)=0
+       SYNC(ismp,nsmp)
+       DO
+         WITH Vd(*,iz): RFTU(u); RFTU(v); RFTU(w)
+         DO WITH Vd(ix,iz), poisson(ix,iz)
+           vuyn.REAL=Vd(ix,iz).v.REAL*Vd(ix,iz).u.REAL; vuyn.IMAG=Vd(ix,iz).v.IMAG*Vd(ix,iz).u.IMAG
+           vwyn.REAL=Vd(ix,iz).v.REAL*Vd(ix,iz).w.REAL; vwyn.IMAG=Vd(ix,iz).v.IMAG*Vd(ix,iz).w.IMAG
+         FOR ALL ix
+         WITH poisson(*,iz): HFTU(vuyn); HFTU(vwyn);
+       FOR iz=ismp*(HI+1) DIV nsmp TO (ismp+1)*(HI+1) DIV nsmp -1
+       SYNC(ismp,nsmp)
+       DO 
+         WITH poisson(ix,*): FFTU(vuyn); FFTU(vwyn);
+         DO WITH poisson(ix,iz): p=calcpnv(ix,iz,vuyn,vwyn) FOR iz=0 TO nz
+         DO WITH poisson(ix,nzd+iz): p=calcpnv(ix,iz,vuyn,vwyn) FOR iz=-nz TO -1
+         poisson(ix,nz+1..nzd-nz-1)=0
+         WITH poisson(ix,*): IFTU(p)
+       FOR ix=ismp*(nx+1) DIV nsmp TO (ismp+1)*(nx+1) DIV nsmp -1
+       IF ismp=0 THEN poisson(nx+1..nxd-1)=0
+       SYNC(ismp,nsmp)
+       DO
+         WITH poisson(*,iz): RFTU(p)
+         DO WITH poisson(ix,iz), Vd(ix,iz):
+           pinn.REAL=v.REAL*p.REAL + 0.5*v.REAL^3
+           pinn.IMAG=v.IMAG*p.IMAG + 0.5*v.IMAG^3
+         FOR ALL ix
+         WITH poisson(*,iz): HFTU(pinn)
+       FOR iz=ismp*(HI+1) DIV nsmp TO (ismp+1)*(HI+1) DIV nsmp -1
+       SYNC(ismp,nsmp)
+       DO WITH poisson(ix,*): FFTU(pinn) FOR ix=ismp*(nx+1) DIV nsmp TO (ismp+1)*(nx+1) DIV nsmp -1
+   REPEAT
+   pn=poisson(0,0).pinn.REAL
+  END IF
+
+  IF NOT first THEN READ  BINARY FROM prev p0; FLUSH prev
+  IF NOT last  THEN WRITE BINARY TO   next p0; FLUSH next
+  IF has_terminal THEN WRITE TO pow_file time, p0, pn; FLUSH(pow_file)
+
+REPEAT forward
