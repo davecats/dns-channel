@@ -25,7 +25,7 @@ addpath ./psd
 % Map field file to disk
 [dns,Ubar,Wbar,VDisk]=open_fld(file);
 % Create vector on disk for velocity output
-Uimage=storedstructure(EMD.fname, {'double' [3 2*dns.nz+1 2*dns.nx+1 dns.ny+1] 'U'}, true);
+Uimage=storedstructure(Vdisk_fname, {'double' [3 2*dns.nz+1 2*dns.nx+1 dns.ny+1] 'U'}, true);
 % Create vector on disk for EMD
 EMDimage=storedstructure(EMD.fname, {'double' [2*dns.nz+1 2*dns.nx+1 EMD.n+1 dns.ny+1] 'EMDC'}, true);
 % Create vector on disk for PSD and XCORR
