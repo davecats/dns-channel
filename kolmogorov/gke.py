@@ -29,7 +29,7 @@ exportTEC = True
 U=1
 # ----------------
 rx = np.linspace(0,2.*pi/alfa0,2*nxd)
-rz = np.linspace(0,4.*pi/beta0,nzd)
+rz = np.linspace(0,2.*pi/beta0,nzd)
 # --- helper function to plot streamlines ---
 def plotstreamlines(x,y,u,v,density=1,nx=100,ny=100):
   xx,yy = np.linspace(x.min(),x.max(),nx), np.linspace(y.min(),y.max(),ny)

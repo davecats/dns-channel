@@ -232,7 +232,7 @@ VETA fieldbuf(0..nx,-nz..nz)
 VELOCITY velbuf(0..nx,-nz..nz)
 SUBROUTINE outstats
 INC outcont; 
-IF outcont>outinterv THEN
+IF outcont>=outinterv THEN
 	outcont=0; getcfl(); cflm=0; energy=0; slice_energy=0; diss=0; slice_diss=0
 
 	DO WITH V(ix,iz,iy): 

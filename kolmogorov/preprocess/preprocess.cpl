@@ -1,0 +1,194 @@
+! This programs converts a CPL field saved in the variables (v,eta)
+! in the natural variables (u,v,w,p) and saves it to disk
+! 
+! The original purpose for the conversion is to use the results 
+! together with Andrea Cimarelli's postprocessing for the GKE 
+! 
+
+! This program is NOT parallel
+
+gamma=0
+outinterv=0
+USE ../../dnsdata
+USE ../../dnsdirect
+USE ../../tke/convenience
+USE rtchecks
+
+! Definitions
+! ------------------------------------
+INTEGER nfmin,nfmax,dn
+ASK nfmin,nfmax,dn
+nftot=[(nfmax-nfmin) DIV dn]+1
+
+NATVARS = STRUCTURE(COMPLEX u,v,w,p)
+REALNATVARS = STRUCTURE(REAL u,v,w,p)
+MEANTERMS = STRUCTURE(REAL U,W,Uy,Wy,Uyy,Wyy)
+RMS = STRUCTURE(REAL uu,vv,ww,uv,uw,vw)
+TKETERMS = STRUCTURE(REAL PROD,PDISS,TDIFF,PDIFF,VDIFF,PHI_TDIFF,PHI_PDIFF,PHI_VDIFF)
+MKETERMS = STRUCTURE(REAL MPROD,TPROD,TMDIF,MMDIF,DISSu,DISSw,PHI_TMDIF,PHI_MMDIF)
+
+ARRAY(0..nx,-nz..nz,-1..ny+1) OF COMPLEX pressure=0
+ARRAY(0..nx,-nz..nz,-1..ny+1) OF DERIVS Vder=0
+ARRAY(0..nxd-1,0..nzd-1) OF DERIVS Vderd=0
+ARRAY(0..nxd-1,0..nzd-1) OF DERPRODS VVderd=0
+ARRAY(0..nxd-1,0..nzd-1) OF NATVARS Fd=0
+ARRAY(0..2*nxd-1,0..nzd-1) OF REALNATVARS Fdr=0
+ARRAY(0..nxd-1,0..nzd-1) OF COMPLEX PHI_TDIFFd=0
+
+ARRAY(-1..ny+1) OF MEANTERMS meandata=0
+ARRAY(-1..ny+1) OF RMS rmsdata=0
+ARRAY(-1..ny+1) OF TKETERMS tkedata=0
+ARRAY(-1..ny+1) OF MKETERMS mkedata=0
+
+POINTER TO STORED ARRAY(-1..ny+1,0..2*nxd-1,0..nzd-1) OF REALNATVARS spaceFIELDimage
+
+USE ../../energy-box/poisson_solver_parallel
+
+! Compute the average field
+! ------------------------------------
+LOOP files FOR n=nfmin TO nfmax BY dn
+  STRING field_name = WRITE('Field'n'.fld')
+  diskfield=OPEN(field_name)
+  WITH diskfield,meandata(*):
+    U=~+uavimage(-1..ny+1)
+    W=~+wavimage(-1..ny+1)
+  CLOSE diskfield
+REPEAT files
+DO WITH meandata(iy): U=U/nftot; W=W/nftot; FOR ALL iy 
+
+! Compute the TKE budget
+! ------------------------------------
+LOOP fields FOR n=nfmin TO nfmax BY dn
+  ! Open field for saving results
+  spaceFIELDimage = OPEN('Field.bin.'n)
+  ! Read field
+  STRING field_name = WRITE('Field'n'.fld')
+  read_field_uvw(field_name)
+  ! Compute fluctuating field
+  WITH meandata(*),V(0,0,*): u.REAL=~-U; w.REAL=~-W
+  ! Pressure field
+  compute_pressure(Vder,pressure)
+  ! Parseval theorem method for RMS and PHI_PDIFF
+  LOOP FOR iy=-1 TO ny+1 WITH rmsdata(iy),tkedata(iy):
+    LOOP FOR ALL iz WITH V(0,iz,iy):
+      uu = ~ + (u|u).REAL; vv = ~ + (v|v).REAL; ww = ~ + (w|w).REAL
+      uv = ~ + (u|v).REAL; uw = ~ + (u|w).REAL; vw = ~ + (v|w).REAL
+      PHI_PDIFF = ~ + (v|pressure(0,iz,iy)).REAL
+    REPEAT
+    LOOP FOR ALL iz AND ix = 1 TO nx WITH V(ix,iz,iy):
+      uu = ~ + 2 * (u|u).REAL; vv = ~ + 2 * (v|v).REAL; ww = ~ + 2 * (w|w).REAL
+      uv = ~ + 2 * (u|v).REAL; uw = ~ + 2 * (u|w).REAL; vw = ~ + 2 * (v|w).REAL
+      PHI_PDIFF = ~ + 2 * (v|pressure(ix,iz,iy)).REAL
+    REPEAT
+  REPEAT
+  ! Pseudo-spectral method for PDISS and PHI_TDIFF
+  LOOP FOR iy=-1 TO ny+1
+    Vderd=0;Fd=0
+    WITH Vder(*,*,iy), V(*,*,iy): 
+      fourier2physical(ux,Vderd(*,*).ux); fourier2physical(uy,Vderd(*,*).uy); fourier2physical(uz,Vderd(*,*).uz)
+      fourier2physical(vx,Vderd(*,*).vx); fourier2physical(vy,Vderd(*,*).vy); fourier2physical(vz,Vderd(*,*).vz)
+      fourier2physical(wx,Vderd(*,*).wx); fourier2physical(wy,Vderd(*,*).wy); fourier2physical(wz,Vderd(*,*).wz)
+      fourier2physical(u,Fd(*,*).u);      fourier2physical(v,Fd(*,*).v);      fourier2physical(w,Fd(*,*).w)
+      fourier2physical(pressure(*,*,iy),Fd(*,*).p);
+    DO WITH Vderd(ix,iz), VVderd(ix,iz), Fd(ix,iz):
+      ux2.REAL=ux.REAL^2; ux2.IMAG=ux.IMAG^2
+      uy2.REAL=uy.REAL^2; uy2.IMAG=uy.IMAG^2
+      uz2.REAL=uz.REAL^2; uz2.IMAG=uz.IMAG^2
+      vx2.REAL=vx.REAL^2; vx2.IMAG=vx.IMAG^2
+      vy2.REAL=vy.REAL^2; vy2.IMAG=vy.IMAG^2
+      vz2.REAL=vz.REAL^2; vz2.IMAG=vz.IMAG^2
+      wx2.REAL=wx.REAL^2; wx2.IMAG=wx.IMAG^2
+      wy2.REAL=wy.REAL^2; wy2.IMAG=wy.IMAG^2
+      wz2.REAL=wz.REAL^2; wz2.IMAG=wz.IMAG^2
+      PHI_TDIFFd(ix,iz).REAL=v.REAL*[u.REAL^2+v.REAL^2+w.REAL^2]; PHI_TDIFFd(ix,iz).IMAG=v.IMAG*[u.IMAG^2+v.IMAG^2+w.IMAG^2]
+    FOR ALL ix,iz
+    DO WITH Fdr(ix,iz): 
+      u=Fd(*,iz).u.REALIFIED(ix); v=Fd(*,iz).v.REALIFIED(ix); w=Fd(*,iz).w.REALIFIED(ix); p=Fd(*,iz).p.REALIFIED(ix); 
+    FOR ix=0 TO 2*nxd-1 AND ALL iz
+    spaceFIELDimage(iy)=Fdr
+    DO WITH VVderd(*,iz): HFT(ux2); HFT(vx2); HFT(wx2); HFT(uy2); HFT(vy2); HFT(wy2); HFT(uz2); HFT(vz2); HFT(wz2) FOR ALL iz
+    DO HFT(PHI_TDIFFd(*,iz)) FOR ALL iz
+    DO WITH VVderd(ix,*): FFT(ux2); FFT(vx2); FFT(wx2); FFT(uy2); FFT(vy2); FFT(wy2); FFT(uz2); FFT(vz2); FFT(wz2) FOR ALL ix
+    DO FFT(PHI_TDIFFd(ix,*)) FOR ALL ix
+    WITH VVderd(0,0), tkedata(iy): PDISS=~+ni*REAL[ux2+uy2+uz2+vx2+vy2+vz2+wx2+wy2+wz2]; PHI_TDIFF=~+PHI_TDIFFd(0,0).REAL    
+  REPEAT LOOP
+  ! Close field for saving results
+  CLOSE(spaceFIELDimage)
+REPEAT fields
+! Mean derivatives (Uy,Wy,Uyy,Wyy)
+WITH meandata: deriv(U, Uy);     LeftLUDivStep2(Uy, D0mat)
+WITH meandata: deriv(W, Wy);     LeftLUDivStep2(Wy, D0mat)
+WITH meandata: deriv2(U, Uyy);   LeftLUDivStep2(Uyy, D0mat)
+WITH meandata: deriv2(W, Wyy);   LeftLUDivStep2(Wyy, D0mat)
+! Average RMS, PHI_TDIFF, PHI_PDIFF and PDISS(TKE)
+WITH tkedata,rmsdata: uu=~/nftot; vv=~/nftot; ww=~/nftot; uv=~/nftot; uw=~/nftot; vw=~/nftot; PHI_TDIFF=~/nftot; PHI_PDIFF=~/nftot; PDISS=~/nftot
+! VDIFF(TKE)
+WITH tkedata, rmsdata:  deriv(0.5*(uu + vv + ww),PHI_VDIFF); LeftLUDivStep2(PHI_VDIFF,D0mat);
+WITH tkedata, rmsdata: deriv2(0.5*(uu + vv + ww),VDIFF);     LeftLUDivStep2(VDIFF,D0mat);     VDIFF=~*ni
+! TDIFF(TKE)
+WITH tkedata: deriv(PHI_TDIFF,TDIFF); LeftLUDivStep2(TDIFF,D0mat); TDIFF=-0.5*~
+! PDIFF(TKE)
+WITH tkedata: deriv(PHI_PDIFF,PDIFF); LeftLUDivStep2(PDIFF,D0mat); PDIFF=-~
+! PROD(TKE) and TPROD(MKE)
+DO WITH rmsdata(iy), meandata(iy), tkedata(iy), mkedata(iy): PROD=-uv*Uy-vw*Wy TPROD=-PROD; FOR iy =-1 TO ny+1
+! DISSu(MKE) and DISSw(MKE)
+DO WITH meandata(iy), mkedata(iy): DISSu=ni*Uy^2; DISSw=ni*Wy^2 FOR iy =-1 TO ny+1
+! TMDIF(MKE)
+DO WITH meandata(iy), rmsdata(iy), mkedata(iy): PHI_TMDIF=-uv*U-vw*W FOR iy=-1 TO ny+1
+WITH mkedata: deriv(PHI_TMDIF,TMDIF);  LeftLUDivStep2(TMDIF,D0mat);
+! MMDIF(MKE)
+DO WITH meandata(iy), mkedata(iy): PHI_MMDIF=U*Uy+W*Wy FOR iy=-1 TO ny+1
+WITH mkedata: deriv(PHI_MMDIF,MMDIF);  LeftLUDivStep2(MMDIF,D0mat);  MMDIF=~*ni
+! MPROD(MKE)
+WITH mkedata,meandata: MPROD=0.5*ni*(Uy(0)-Uy(ny))*U
+
+! Write to ASCII file
+! ------------------------------------
+! TKE
+FILE outfile=CREATE("tke.dat")
+WRITE TO outfile "y","PROD","PDISS","TDIFF","PDIFF","VDIFF","PHI_TDIFF","PHI_PDIFF","PHI_VDIFF"
+DO WITH tkedata(iy): WRITE TO outfile y(iy),PROD,PDISS,TDIFF,PDIFF,VDIFF,PHI_TDIFF,PHI_PDIFF,PHI_VDIFF FOR iy=0 TO ny 
+CLOSE(outfile)
+! TKE - integrals
+FILE outfile=CREATE("tkeintegrals.dat")
+WRITE TO outfile "PROD","PDISS","TDIFF","PDIFF","VDIFF"
+WITH tkedata: WRITE TO outfile yintf(PROD),yintf(PDISS),yintf(TDIFF),yintf(PDIFF),yintf(VDIFF)
+CLOSE(outfile)
+! MKE
+FILE outfile=CREATE("mke.dat")
+WRITE TO outfile "y","MPROD","TPROD","TMDIF","MMDIF","DISSu","DISSw","PHI_TMDIF","PHI_MMDIF"
+DO WITH mkedata(iy): WRITE TO outfile y(iy),MPROD,TPROD,TMDIF,MMDIF,DISSu,DISSw,PHI_TMDIF,PHI_MMDIF FOR iy=0 TO ny 
+CLOSE(outfile)
+! MKE - integrals
+FILE outfile=CREATE("mkeintegrals.dat")
+WRITE TO outfile "MPROD","TPROD","TMDIF","MMDIF","DISSu","DISSw"
+WITH mkedata: WRITE TO outfile yintf(MPROD),yintf(TPROD),yintf(TMDIF),yintf(MMDIF),yintf(DISSu),yintf(DISSw)
+CLOSE(outfile)
+! RMS
+FILE outfile=CREATE("rms.dat")
+WRITE TO outfile "y","uu","vv","ww","uv","uw","vw"
+DO WITH rmsdata(iy): WRITE TO outfile y(iy),uu,vv,ww,uv,uw,vw FOR iy=0 TO ny
+CLOSE(outfile)
+! MEAN
+FILE outfile=CREATE("mean.dat")
+WRITE TO outfile "y","U","W","Uy","Wy","Uyy","Wyy"
+DO WITH meandata(iy): WRITE TO outfile y(iy),U,W,Uy,Wy,Uyy,Wyy FOR iy=0 TO ny
+CLOSE(outfile)
+
+! Write to binary file
+! ------------------------------------
+POINTER TO STORED STRUCTURE[
+        ARRAY(-1..ny+1) OF MEANTERMS meandataimage
+        ARRAY(-1..ny+1) OF TKETERMS tkedataimage
+        ARRAY(-1..ny+1) OF MKETERMS mkedataimage
+] tkeimage
+tkeimage = CREATE("tke.bin")
+WITH tkeimage: meandataimage=meandata; tkedataimage=tkedata; mkedataimage=mkedata; CLOSE(tkeimage)
+
+! Write useful info
+! ------------------------------------
+FILE outfile=CREATE("Field.nfo")
+WRITE BY NAME TO outfile 2*nxd,nzd,ny
+WRITE BY NAME TO outfile 2*PI/alfa0,2*PI/beta0
+WRITE BY NAME TO outfile 1/ni
+CLOSE(outfile)
