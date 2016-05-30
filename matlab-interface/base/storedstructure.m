@@ -14,7 +14,7 @@ for i=1:numel(field)/3
     if numel(field)/3 == 1; s=field{2}; else s=field{i,2}; end
     FSIZE=FSIZE+bs*prod(s);
 end
-CHUNKSIZE=10000*1000;
+CHUNKSIZE=10000*1000; if FSIZE<CHUNKSIZE; CHUNKSIZE=FSIZE/2; end % This if can be merged with following for cycle
 
 fh = fopen(fname,'r'); if fh>-1; fclose(fh); end
 if fh==-1
