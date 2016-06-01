@@ -4,9 +4,6 @@ from  dnsdata  import *
 from  scipy.interpolate import interp2d,interpn
 # MATPLOTLIB 3D
 from skimage import measure
-from mpl_toolkits.mplot3d import Axes3D
-from matplotlib.tri import Triangulation
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 # VISPY
 from vispy import app,scene
 # ----------------
@@ -23,9 +20,9 @@ from vispy import app,scene
 # ----------------
 path = './dat/'
 averagey = True
-isoplot = False
+isoplot = True
 streamplot = False
-exportTEC = True
+exportTEC = False
 U=1
 # ----------------
 rx = np.linspace(0,2.*pi/alfa0,2*nxd)
@@ -117,7 +114,6 @@ if exportTEC:
 # ---------------------------
 if isoplot:
   RX,RY,RZ,SOURCE = eqspcdgrd(y,rx[0:nxd],rz[0:nzd//2],(source+sink)[:,0:nxd,0:nzd//2],nx=200,ny=200,nz=200)
-  print(np.shape(SOURCE))
   levels=[0.5*((source+sink).min()), 0.7*((source+sink).max())]
 
 # Surface plot with Matplotlib

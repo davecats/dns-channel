@@ -22,7 +22,6 @@ nfmax=5001
 dn=1000
 ! -----------------------------
 INTEGER nftot=[(nfmax-nfmin) DIV dn]+1
-INLINE INTEGER FUNCTION izd(INTEGER iz)=IF iz>=0 THEN iz ELSE nzd+iz
 
 ! Definitions
 ! -----------------------------
@@ -69,6 +68,9 @@ IF NOT first THEN READ FROM prev
         CLOSE(tkeimage)
 IF NOT last THEN WRITE TO next
 
+#define pR(A,f) A(*,iz).f.REALIFIED(ix)
+#define mR(A,f) A(*,nzd-1-iz).f.REALIFIED(2*nxd-1-ix)
+#define R0(A,f) A(*,0).f.REALIFIED(0)
 IF has_terminal THEN WRITE "Computing Kolmogorov Equation..."
 ! Compute Kolmogorov Equation
 ! -------------------------------
@@ -84,19 +86,18 @@ LOOP files FOR if=nfmin TO nfmax BY dn
           LOOP dplanes FOR ry=-2 TO 2        
             ARRAY(0..nxd-1,0..nzd-1) OF STRUCTURE(COMPLEX uu,vv,ww) G=0
             LOOP FOR ix = 0 TO nx
-              DO WITH V(ix,iz,iyc+ry), G(ix,iz):     uu=u|u; vv=v|v; ww=w|w FOR iz=0 TO nz
-              DO WITH V(ix,iz,iyc+ry), G(ix,nzd+iz): uu=u|u; vv=v|v; ww=w|w FOR iz=-nz TO -1
+              DO WITH V(ix,iz,*), G(ix,iz):     uu=u(iyc-ry)|u(iyc+ry); vv=v(iyc-ry)|v(iyc+ry); ww=w(iyc-ry)|w(iyc+ry) FOR iz=0 TO nz
+              DO WITH V(ix,iz,*), G(ix,nzd+iz): uu=u(iyc-ry)|u(iyc+ry); vv=v(iyc-ry)|v(iyc+ry); ww=w(iyc-ry)|w(iyc+ry) FOR iz=-nz TO -1
               WITH G(ix,*): IFT(uu); IFT(vv); IFT(ww)
             REPEAT LOOP
             DO WITH G(*,iz): RFT(uu); RFT(vv); RFT(ww) FOR ALL iz 
-            DO WITH G(ix,iz): 
-              scaleENERy(ry,ix,iz).REAL=2*G(0,0).uu.REAL-2*uu.REAL+2*G(0,0).vv.REAL-2*vv.REAL+2*G(0,0).ww.REAL-2*ww.REAL 
-              scaleENERy(ry,ix,iz).IMAG=2*G(0,0).uu.REAL-2*uu.IMAG+2*G(0,0).vv.REAL-2*vv.IMAG+2*G(0,0).ww.REAL-2*ww.IMAG 
-            FOR ix=0 TO nxd-1 AND iz=0 TO nzd-1
+            DO 
+              scaleENERy(ry,*,iz).REALIFIED(ix) = 2*R0(G,uu) - 2*pR(G,uu) + 2*R0(G,vv) - 2*pR(G,vv) + 2*R0(G,ww) - 2*pR(G,ww) 
+            FOR ix=0 TO 2*nxd-1 AND iz=0 TO nzd-1
           REPEAT dplanes
-          DO scaleENER(iyc,ix,iz)=~+scaleENERy(0,*,iz).REALIFIED(ix) FOR ix=0 TO 2*nxd-1 AND iz=0 TO nzd-1
+          DO scaleENER(iyc,ix,iz)=~+scaleENERy(0,*,iz).REALIFIED(ix) FOR ix=0 TO 2*nxd-1 AND ALL iz
           DO WITH phiR(iyc,ix,iz).VISC, derivs_standalone(iyc): yy = ~ -2*ni*[SUM d1(i)*scaleENERy(i,*,iz).REALIFIED(ix) FOR i=-2 TO 2] FOR ALL iz AND ix=0 TO 2*nxd-1
-          scaleENERy(-2..-1,*,*)=0          
+          scaleENERy(-2..-1,*,*)=0 ! x and z derivatives of scaleENERy in positions -2..-1, maybe add variables to make clearer, it's a postpro XXX
           DO HFT(scaleENERy(0,*,iz)) FOR ALL iz
           DO 
             FFT(scaleENERy(0,ix,*)) 
@@ -110,33 +111,33 @@ LOOP files FOR if=nfmin TO nfmax BY dn
             zz = ~ -2*ni*scaleENERy(-2,*,iz).REALIFIED(ix)
           FOR ALL iz AND ix=0 TO 2*nxd-1
         ! All other terms
-          ARRAY(0..nxd-1,0..nzd-1) OF STRUCTURE(COMPLEX vu,pv,uuu,uuv,uuw,vvu,vvv,vvw,wwu,wwv,www,uvu,uvv,uwu,uww,vwv,vww) R=0
+          ARRAY(0..nxd-1,0..nzd-1) OF STRUCTURE(COMPLEX uv,pv,uuu,uuv,uuw,vvu,vvv,vvw,wwu,wwv,www,uvu,uvv,uwu,uww,vwv,vww) R=0
           convolutions(V(*,*,iyc),VVd(*,*,2))
           LOOP FOR ix = 0 TO nx
             DO WITH V(ix,iz,iyc), VVd(ix,iz,2), R(ix,iz):  
-              uuu=u|uu;  uuv=v|uu;  uuw=w|uu;  vvu=u|vv;  vvv=v|vv;  vvw=w|vv;   wwu=u|ww;  wwv=v|ww;  www=w|ww;
-              uvu=u|uv;  uvv=v|uv;  uwu=u|uw;  uww=w|uw;  vwv=v|vw;  vww=w|vw;   vu=v|u;   pv=p(ix,iz,iyc)|v
+              uuu=uu|u;  uuv=uu|v;  uuw=uu|w;  vvu=vv|u;  vvv=vv|v;  vvw=vv|w;   wwu=ww|u;  wwv=ww|v;  www=ww|w;
+              uvu=uv|u;  uvv=uv|v;  uwu=uw|u;  uww=uw|w;  vwv=vw|v;  vww=vw|w;    uv= u|v;  pv=p(ix,iz,iyc)|v
             FOR iz=0 TO nz
             DO WITH V(ix,iz,iyc), VVd(ix,nzd+iz,2), R(ix,nzd+iz):  
-              uuu=u|uu;  uuv=v|uu;  uuw=w|uu;  vvu=u|vv;  vvv=v|vv;  vvw=w|vv;   wwu=u|ww;  wwv=v|ww;  www=w|ww;
-              uvu=u|uv;  uvv=v|uv;  uwu=u|uw;  uww=w|uw;  vwv=v|vw;  vww=w|vw;   vu=v|u;   pv=p(ix,iz,iyc)|v
+              uuu=uu|u;  uuv=uu|v;  uuw=uu|w;  vvu=vv|u;  vvv=vv|v;  vvw=vv|w;   wwu=ww|u;  wwv=ww|v;  www=ww|w;
+              uvu=uv|u;  uvv=uv|v;  uwu=uw|u;  uww=uw|w;  vwv=vw|v;  vww=vw|w;    uv= u|v;  pv=p(ix,iz,iyc)|v
             FOR iz=-nz TO -1
-            WITH R(ix,*): IFT(uuu); IFT(uuv); IFT(uuw); IFT(vvu); IFT(vvv); IFT(vvw); IFT(vu);  IFT(pv);
+            WITH R(ix,*): IFT(uuu); IFT(uuv); IFT(uuw); IFT(vvu); IFT(vvv); IFT(vvw); IFT(uv);  IFT(pv);
             WITH R(ix,*): IFT(wwu); IFT(wwv); IFT(www); IFT(uvu); IFT(uvv); IFT(uwu); IFT(uww); IFT(vwv); IFT(vww);
           REPEAT LOOP
           DO WITH R(*,iz): 
-            RFT(uuu); RFT(uuv); RFT(uuw); RFT(vvu); RFT(vvv); RFT(vvw); RFT(wwu); 
-            RFT(wwv); RFT(www); RFT(uvu); RFT(uvv); RFT(uwu); RFT(uww); RFT(vwv); RFT(vww); RFT(vu); RFT(pv);
+            RFT(uuu); RFT(uuv); RFT(uuw); RFT(vvu); RFT(vvv); RFT(vvw); RFT(uv);  RFT(pv);
+            RFT(wwu); RFT(wwv); RFT(www); RFT(uvu); RFT(uvv); RFT(uwu); RFT(uww); RFT(vwv); RFT(vww);
           FOR ALL iz 
           DO WITH phiR(iyc,ix,iz).TURB, phiC(iyc,ix,iz),  meandata(iyc):
-#define pR(f) R(*,iz).f.REALIFIED(ix)
-#define mR(f) R(*,nzd-1-iz).f.REALIFIED(2*nxd-1-ix)
-            xx   = ~ + 3*mR(uuu) - 3*pR(uuu) + mR(vvu) -2*pR(uvv) -pR(vvu) + 2*mR(uvv) + mR(wwu) -2*pR(uww) -pR(wwu) + 2*mR(uww)
-            yy   = ~ + 3*mR(vvv) - 3*pR(vvv) + mR(uuv) -2*pR(uvu) -pR(uuv) + 2*mR(uvu) + mR(wwv) -2*pR(vww) -pR(wwv) + 2*mR(vww)
-            zz   = ~ + 3*mR(www) - 3*pR(www) + mR(uuw) -2*pR(uwu) -pR(uuw) + 2*mR(uwu) + mR(vvw) -2*pR(vwv) -pR(vvw) + 2*mR(vwv)
-            TURB = ~ + 0.5*[ 2*R(*,0).uuv.REALIFIED(0) + pR(uuv) + mR(uuv) -2*pR(uvu) -2*mR(uvu) ]
-            PRES = ~ + 2*[ 2*R(*,0).pv.REALIFIED(0) - pR(pv) - mR(pv) ]
-            scalePROD(iyc,ix,iz) = ~ -2*[ 2*R(*,0).vu.REALIFIED(0) - pR(vu) - mR(vu)]*Uy
+#define Rturb(f,g) ( pR(R,f) - mR(R,f) + 2*pR(R,g) - 2*mR(R,g) + R0(R,f) - R0(R,g) )
+#define Cturb(f,g) ( pR(R,f) + mR(R,f) - 2*pR(R,g) - 2*mR(R,g) + R0(R,f) + R0(R,g) )
+            xx   = ~ +       Rturb(uuu,uuu) + Rturb(vvu,uvv) + Rturb(wwu,uww)
+            yy   = ~ +       Rturb(uuv,uvu) + Rturb(vvv,vvv) + Rturb(wwv,vww)
+            zz   = ~ +       Rturb(uuw,uwu) + Rturb(vvw,vwv) + Rturb(www,www)
+            TURB = ~ + 0.5*[ Cturb(uuv,uvu) + Cturb(vvv,vvv) + Cturb(wwv,vww) ]
+            PRES = ~ + 2*[ 2*R0(R,pv) - pR(R,pv) - mR(R,pv) ]
+            scalePROD(iyc,ix,iz) = ~ -2*[ 2*R0(R,uv) - pR(R,uv) - mR(R,uv)]*Uy
           FOR ix=0 TO 2*nxd-1 AND iz=0 TO nzd-1      
         REPEAT planes
 REPEAT files

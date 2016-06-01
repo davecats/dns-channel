@@ -4,6 +4,9 @@
 ! The original purpose for the conversion is to use the results 
 ! together with Andrea Cimarelli's postprocessing for the GKE 
 ! 
+! As a byproduct this program also performs the analysis of tke.cpl
+! 
+! 
 
 ! This program is NOT parallel
 
@@ -191,4 +194,10 @@ FILE outfile=CREATE("Field.nfo")
 WRITE BY NAME TO outfile 2*nxd,nzd,ny
 WRITE BY NAME TO outfile 2*PI/alfa0,2*PI/beta0
 WRITE BY NAME TO outfile 1/ni
+CLOSE(outfile)
+
+! Write data for Cimerelli's GKE
+! ------------------------------
+FILE outfile=CREATE("prepro.dat")
+DO WITH meandata(iy),tkedata(iy): WRITE TO outfile y(iy),U,Uy,PDISS FOR iy=-1 TO ny+1
 CLOSE(outfile)
