@@ -22,6 +22,9 @@ nfmax=5001
 dn=1000
 ! -----------------------------
 INTEGER nftot=[(nfmax-nfmin) DIV dn]+1
+ARRAY(-nz..nz) OF INTEGER izdV=0; DO izdV(iz)=IF iz>=0 THEN iz ELSE nzd+iz FOR iz=-nz TO nz
+izd==izdV(iz)
+
 
 ! Definitions
 ! -----------------------------
@@ -86,8 +89,7 @@ LOOP files FOR if=nfmin TO nfmax BY dn
           LOOP dplanes FOR ry=-2 TO 2        
             ARRAY(0..nxd-1,0..nzd-1) OF STRUCTURE(COMPLEX uu,vv,ww) G=0
             LOOP FOR ix = 0 TO nx
-              DO WITH V(ix,iz,*), G(ix,iz):     uu=u(iyc-ry)|u(iyc+ry); vv=v(iyc-ry)|v(iyc+ry); ww=w(iyc-ry)|w(iyc+ry) FOR iz=0 TO nz
-              DO WITH V(ix,iz,*), G(ix,nzd+iz): uu=u(iyc-ry)|u(iyc+ry); vv=v(iyc-ry)|v(iyc+ry); ww=w(iyc-ry)|w(iyc+ry) FOR iz=-nz TO -1
+              DO WITH V(ix,iz,*), G(ix,izd):     uu=u(iyc-ry)|u(iyc+ry); vv=v(iyc-ry)|v(iyc+ry); ww=w(iyc-ry)|w(iyc+ry) FOR iz=-nz TO nz
               WITH G(ix,*): IFT(uu); IFT(vv); IFT(ww)
             REPEAT LOOP
             DO WITH G(*,iz): RFT(uu); RFT(vv); RFT(ww) FOR ALL iz 
@@ -114,21 +116,13 @@ LOOP files FOR if=nfmin TO nfmax BY dn
           ARRAY(0..nxd-1,0..nzd-1) OF STRUCTURE(COMPLEX uv,pv,uuu,uuv,uuw,vvu,vvv,vvw,wwu,wwv,www,uvu,uvv,uwu,uww,vwv,vww) R=0
           convolutions(V(*,*,iyc),VVd(*,*,2))
           LOOP FOR ix = 0 TO nx
-            DO WITH V(ix,iz,iyc), VVd(ix,iz,2), R(ix,iz):  
-              uuu=uu|u;  uuv=uu|v;  uuw=uu|w;  vvu=vv|u;  vvv=vv|v;  vvw=vv|w;   wwu=ww|u;  wwv=ww|v;  www=ww|w;
-              uvu=uv|u;  uvv=uv|v;  uwu=uw|u;  uww=uw|w;  vwv=vw|v;  vww=vw|w;    uv= u|v;  pv=p(ix,iz,iyc)|v
-            FOR iz=0 TO nz
-            DO WITH V(ix,iz,iyc), VVd(ix,nzd+iz,2), R(ix,nzd+iz):  
-              uuu=uu|u;  uuv=uu|v;  uuw=uu|w;  vvu=vv|u;  vvv=vv|v;  vvw=vv|w;   wwu=ww|u;  wwv=ww|v;  www=ww|w;
-              uvu=uv|u;  uvv=uv|v;  uwu=uw|u;  uww=uw|w;  vwv=vw|v;  vww=vw|w;    uv= u|v;  pv=p(ix,iz,iyc)|v
-            FOR iz=-nz TO -1
-            WITH R(ix,*): IFT(uuu); IFT(uuv); IFT(uuw); IFT(vvu); IFT(vvv); IFT(vvw); IFT(uv);  IFT(pv);
-            WITH R(ix,*): IFT(wwu); IFT(wwv); IFT(www); IFT(uvu); IFT(uvv); IFT(uwu); IFT(uww); IFT(vwv); IFT(vww);
+            DO WITH V(ix,iz,iyc), VVd(ix,izd,2), R(ix,izd):  
+              uv= u|v;  pv=p(ix,iz,iyc)|v;    uuu=uu|u;  uuv=uu|v;  uuw=uu|w;  vvu=vv|u;  vvv=vv|v;  vvw=vv|w;   
+              wwu=ww|u;  wwv=ww|v;  www=ww|w; uvu=uv|u;  uvv=uv|v;  uwu=uw|u;  uww=uw|w;  vwv=vw|v;  vww=vw|w;    
+            FOR iz=-nz TO nz
+            WITH R(ix,*):  INLINE LOOP FOR iii IN (uv,pv,uuu,uuv,uuw,vvu,vvv,vvw,wwu,wwv,www,uvu,uvv,uwu,uww,vwv,vww); IFT(iii); REPEAT
           REPEAT LOOP
-          DO WITH R(*,iz): 
-            RFT(uuu); RFT(uuv); RFT(uuw); RFT(vvu); RFT(vvv); RFT(vvw); RFT(uv);  RFT(pv);
-            RFT(wwu); RFT(wwv); RFT(www); RFT(uvu); RFT(uvv); RFT(uwu); RFT(uww); RFT(vwv); RFT(vww);
-          FOR ALL iz 
+          DO WITH R(*,iz): INLINE LOOP FOR iii IN (uv,pv,uuu,uuv,uuw,vvu,vvv,vvw,wwu,wwv,www,uvu,uvv,uwu,uww,vwv,vww); RFT(iii); REPEAT; FOR ALL iz 
           DO WITH phiR(iyc,ix,iz).TURB, phiC(iyc,ix,iz),  meandata(iyc):
 #define Rturb(f,g) ( pR(R,f) - mR(R,f) + 2*pR(R,g) - 2*mR(R,g) + R0(R,f) - R0(R,g) )
 #define Cturb(f,g) ( pR(R,f) + mR(R,f) - 2*pR(R,g) - 2*mR(R,g) + R0(R,f) + R0(R,g) )
