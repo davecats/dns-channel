@@ -39,33 +39,25 @@
 
 % =========================================================================
 
-function[dns,U,W,VEta]=import_fld(file)
+function[dns,VDisk]=open_cart(file)
 
 % Open file
 fileID=fopen(file);
 % Read header
-dns=struct('ny',fread(fileID,1,'int32'),'nx',fread(fileID,1,'int32'),'nz',fread(fileID,1,'int32'));
-fseek(fileID,32/8,'cof');
-dns.time=fread(fileID,1,'double');
-dns.ymin=fread(fileID,1,'double');
-dns.ymax=fread(fileID,1,'double');
-dns.a=fread(fileID,1,'double');
-dns.alfa0=fread(fileID,1,'double');
-dns.beta0=fread(fileID,1,'double');
-dns.ni=fread(fileID,1,'double');
-% Read mean velocity profiles
-U=fread(fileID,(dns.ny+3),'double');
-W=fread(fileID,(dns.ny+3),'double');
+header=fread(fileID,1024,'*char')';
+i=find(header=='=');
+dns.ny=str2double(header(i(1)+1 : i(2)-3));
+dns.nx=str2double(header(i(2)+1 : i(3)-3));
+dns.nz=str2double(header(i(3)+1 : i(4)-6));
+dns.alfa0=str2double(header(i(4)+1 : i(5)-6));
+dns.beta0=str2double(header(i(5)+1 : i(6)-5));
+dns.ymin=str2double(header(i(6)+1 : i(7)-5));
+dns.ymax=str2double(header(i(7)+1 : i(8)-2));
+dns.a=str2double(header(i(8)+1 : i(9)-3));
+dns.Re=str2double(header(i(9)+1 : i(10)-5));
+dns.time=str2double(header(i(10)+1 : end));
 offset=ftell(fileID);
-% Declare the velocity field
-VEta=complex(zeros(3,2*dns.nz+1,2*dns.nx+1,dns.ny+3));
 fclose(fileID);
-% Map file to memory
-disp(strcat('Reading velocity field : ', file))
 VDisk=memmapfile(file, ...
-                 'Format', {'double' [2 2 2*dns.nz+1 dns.nx+1 dns.ny+3] 'V'}, ...
-                 'Offset', offset);
-VEta(2:3,:,dns.nx+1:2*dns.nx+1,:)=complex(VDisk.data.V(1,:,:,:,:),...
-                                           VDisk.data.V(2,:,:,:,:));
-
-
+                'Format', {'double' [2 3 2*dns.nz+1 dns.nx+1 dns.ny+3] 'V'}, ...
+                'Offset', offset);
