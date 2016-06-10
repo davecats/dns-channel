@@ -1,7 +1,7 @@
 !#define bodyforce
 !#define passivescal
 gamma=0
-outinterv=10
+outinterv=0
 USE dnsdata
 USE dnsdirect
 !USE rtchecks
