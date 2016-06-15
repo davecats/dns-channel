@@ -88,15 +88,18 @@ SUBROUTINE read_field_parallel(STRING field_name)
 END read_field_parallel
 
 SUBROUTINE read_field(STRING field_name)
-  WRITE "Reading field_file",field_name
-  diskfield=OPEN(field_name)
-  WITH diskfield
-    LOOP FOR iy = nyl-2 TO nyh+2
-      DO V(ix,*,iy).v=fieldimage(iy,ix,*).v; V(ix,*,iy).u=fieldimage(iy,ix,*).eta FOR ALL ix
-    REPEAT LOOP
-    V(0,0,*).u.REAL=uavimage(nyl-2..nyh+2)
-    V(0,0,*).w.REAL=wavimage(nyl-2..nyh+2)
-  CLOSE diskfield
+  IF has_terminal THEN WRITE "Reading field_file",field_name
+  IF NOT first THEN READ FROM prev
+    diskfield=OPEN(field_name)
+    WITH diskfield:
+     V(0,0,*).u.REAL=uavimage(nyl-2..nyh+2)
+     V(0,0,*).w.REAL=wavimage(nyl-2..nyh+2)
+     LOOP FOR iy=nyl-2 TO nyh+2
+        DO V(ix,iz,iy).v=fieldimage(iy,ix,iz).v FOR ALL ix,iz EXCEPT ix=0 AND iz=0
+        DO V(ix,iz,iy).u=fieldimage(iy,ix,iz).eta FOR ALL ix,iz EXCEPT ix=0 AND iz=0
+     REPEAT LOOP
+     CLOSE diskfield
+  IF NOT last THEN WRITE TO next
 END read_field
 
 SUBROUTINE read_field_uvw(STRING field_name)
