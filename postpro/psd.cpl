@@ -15,32 +15,47 @@ USE ../dnsdirect
 USE ../tke/convenience.cpl
 
 ! Parameters
-INTEGER nfmin=1,nfmax=30, nftot
+INTEGER nfmin=1,nfmax=31, nftot
+STRING path="./postpro-fld/"
+!------------
 nftot=nfmax-nfmin+1
 
 ! Definitions
+MEANTERMS = STRUCTURE(REAL U,W)
 SPECTRUM=STRUCTURE(REAL uu,vv,ww,uv,uw,vw)
 
 ! Array declarations
 ARRAY(nyl-2..nyh+2,0..nx,-nz..nz) OF SPECTRUM psd=0
+ARRAY(nyl-2..nyh+2) OF MEANTERMS meandata=0
 POINTER TO STORED STRUCTURE[
         ARRAY(-1..ny+1,0..nx,-nz..nz) OF SPECTRUM psd_image
 ] psd_file
 
-! Main loop on files
+! Compute the average field
+LOOP FOR n=nfmin TO nfmax
+  STRING field_name = WRITE(path'Field'n'.fld')
+  IF NOT first THEN READ FROM prev
+  diskfield=OPEN(field_name)
+  WITH diskfield,meandata(*):
+    U=~+uavimage(nyl-2..nyh+2)
+    W=~+wavimage(nyl-2..nyh+2)
+  CLOSE diskfield
+  IF NOT last THEN WRITE TO next
+REPEAT 
+DO WITH meandata(iy): U=U/nftot; W=W/nftot; FOR ALL iy 
 
+! Main loop on files
 LOOP files FOR n=nfmin TO nfmax
     ! Read field
-    STRING field_name = WRITE('Field'n'.fld')
+    STRING field_name = WRITE(path'Field'n'.fld')
     read_field_parallel(field_name)
-    V(0,0,*)=0
+    WITH V(0,0,*),meandata(*): u=~-U; w=~-W
     ! Compute PSD and CSD
     IF has_terminal THEN WRITE "Computing PSD and CSD"
-    LOOP FOR ALL ix,iz,iy WITH psd(iy,ix,iz),V(ix,iz,iy):
-        uu=~+1/alfa0/beta0*NORM[u];  vv=~+1/alfa0/beta0*NORM[v]
-        ww=~+1/alfa0/beta0*NORM[w];  uv=~+1/alfa0/beta0*[v|u].REAL
-        uw=~+1/alfa0/beta0*[w|u].REAL; vw=~+1/alfa0/beta0*[w|v].REAL
-    REPEAT LOOP 
+    DO
+      DO WITH psd(iy,ix,iz),V(ix,iz,iy):  uu=~+2*NORM[u]; vv=~+2*NORM[v]; ww=~+2*NORM[w]; uv=~+2*[u|v].REAL; uw=~+2*[u|w].REAL; vw=~+2*[v|w].REAL FOR ix=1 TO nx
+         WITH psd(iy,0,iz),V(0,iz,iy):   uu=~+  NORM[u]; vv=~+  NORM[v]; ww=~+  NORM[w]; uv=~+  [u|v].REAL; uw=~+  [u|w].REAL; vw=~+  [v|w].REAL
+    FOR ALL iy,iz 
 REPEAT files
 
 ! Average

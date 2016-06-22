@@ -3,7 +3,7 @@ USE fft
 USE rbmat
 USE parallel
 
-nsmp=4
+nsmp=1
 
 
 ! Parallel - initialization

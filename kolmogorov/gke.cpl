@@ -1,10 +1,10 @@
 
-! 
+!
 ! Computes the source term, space and scale flux for ry=0
-! in the generalized Kolmogorov equation specialized 
-! for channel flow, as in Marati, Casciola, Piva, JFM 2004, 
-! equation 3.4 and following definitions. 
-! 
+! in the generalized Kolmogorov equation specialized
+! for channel flow, as in Marati, Casciola, Piva, JFM 2004,
+! equation 3.4 and following definitions.
+!
 ! This program IS parallel with distributed memory support
 
 gamma=0
@@ -20,21 +20,21 @@ WRITE BY NAME 2*nxd,nzd
 nfmin=1001
 nfmax=5001
 dn=1000
+
 ! -----------------------------
 INTEGER nftot=[(nfmax-nfmin) DIV dn]+1
 ARRAY(-nz..nz) OF INTEGER izdV=0; DO izdV(iz)=IF iz>=0 THEN iz ELSE nzd+iz FOR iz=-nz TO nz
 izd==izdV(iz)
 
-
 ! Definitions
 ! -----------------------------
 FLUXVEC = STRUCTURE(REAL xx, yy, zz)
 SCALEFLUX = STRUCTURE(FLUXVEC TURB, MEAN, VISC)
-DIVSCALEFLUX = STRUCTURE(REAL TURB, MEAN, VISC) 
+DIVSCALEFLUX = STRUCTURE(REAL TURB, MEAN, VISC)
 SPACEFLUX = STRUCTURE(REAL TURB, PRES, VISC)
-MEANTERMS = STRUCTURE(REAL U,W,Uy,Wy,Uyy,Wyy) ! tke.cpl 
-TKETERMS = STRUCTURE(REAL PROD,PDISS,TDIFF,PDIFF,VDIFF,PHI_TDIFF,PHI_PDIFF,PHI_VDIFF) ! tke.cpl
-MKETERMS = STRUCTURE(REAL MPROD,TPROD,TMDIF,MMDIF,DISSu,DISSw,PHI_TMDIF,PHI_MMDIF) ! tke.cpl
+MEANTERMS = STRUCTURE(REAL U,W,Uy,Wy,Uyy,Wyy) ! tke.cpl
+TKETERMS = STRUCTURE(REAL PRuv,PRvw,PDISS,TDIFF,PDIFF,VDIFF,PHI_TDIFF,PHI_PDIFF,PHI_VDIFF) ! tke.cpl
+MKETERMS = STRUCTURE(REAL MPROD,TPRuv,TPRvw,TMDIF,MMDIF,DISSu,DISSw,PHI_TMDIF,PHI_MMDIF) ! tke.cpl
 
 ARRAY(nyl-2..nyh+2,0..2*nxd-1,0..nzd-1) OF REAL scalePROD=0
 ARRAY(nyl-2..nyh+2) OF REAL scaleDISS=0
@@ -86,43 +86,43 @@ LOOP files FOR if=nfmin TO nfmax BY dn
         LOOP planes FOR iyc=nyl TO nyh
         ! Compute phiR.VISC and scaleENER
           ARRAY(-2..2,0..nxd-1,0..nzd-1) OF COMPLEX scaleENERy=0
-          LOOP dplanes FOR ry=-2 TO 2        
+          LOOP dplanes FOR ry=-2 TO 2
             ARRAY(0..nxd-1,0..nzd-1) OF STRUCTURE(COMPLEX uu,vv,ww) G=0
             LOOP FOR ix = 0 TO nx
               DO WITH V(ix,iz,*), G(ix,izd):     uu=u(iyc-ry)|u(iyc+ry); vv=v(iyc-ry)|v(iyc+ry); ww=w(iyc-ry)|w(iyc+ry) FOR iz=-nz TO nz
               WITH G(ix,*): IFT(uu); IFT(vv); IFT(ww)
             REPEAT LOOP
-            DO WITH G(*,iz): RFT(uu); RFT(vv); RFT(ww) FOR ALL iz 
-            DO 
-              scaleENERy(ry,*,iz).REALIFIED(ix) = 2*R0(G,uu) - 2*pR(G,uu) + 2*R0(G,vv) - 2*pR(G,vv) + 2*R0(G,ww) - 2*pR(G,ww) 
+            DO WITH G(*,iz): RFT(uu); RFT(vv); RFT(ww) FOR ALL iz
+            DO
+              scaleENERy(ry,*,iz).REALIFIED(ix) = 2*R0(G,uu) - 2*pR(G,uu) + 2*R0(G,vv) - 2*pR(G,vv) + 2*R0(G,ww) - 2*pR(G,ww)
             FOR ix=0 TO 2*nxd-1 AND iz=0 TO nzd-1
           REPEAT dplanes
           DO scaleENER(iyc,ix,iz)=~+scaleENERy(0,*,iz).REALIFIED(ix) FOR ix=0 TO 2*nxd-1 AND ALL iz
           DO WITH phiR(iyc,ix,iz).VISC, derivs_standalone(iyc): yy = ~ -2*ni*[SUM d1(i)*scaleENERy(i,*,iz).REALIFIED(ix) FOR i=-2 TO 2] FOR ALL iz AND ix=0 TO 2*nxd-1
           scaleENERy(-2..-1,*,*)=0 ! x and z derivatives of scaleENERy in positions -2..-1, maybe add variables to make clearer, it's a postpro XXX
           DO HFT(scaleENERy(0,*,iz)) FOR ALL iz
-          DO 
-            FFT(scaleENERy(0,ix,*)) 
+          DO
+            FFT(scaleENERy(0,ix,*))
             DO scaleENERy(-1,ix,iz)=I*alfa0*ix*scaleENERy(0,ix,iz);         scaleENERy(-2,ix,iz)=I*beta0*iz*scaleENERy(0,ix,iz); FOR iz=0 TO nz
             DO scaleENERy(-1,ix,nzd+iz)=I*alfa0*ix*scaleENERy(0,ix,nzd+iz); scaleENERy(-2,ix,nzd+iz)=I*beta0*iz*scaleENERy(0,ix,nzd+iz); FOR iz=-nz TO -1
             IFT(scaleENERy(-2,ix,*)); IFT(scaleENERy(-1,ix,*))
-          FOR ix=0 TO nx 
+          FOR ix=0 TO nx
           DO RFT(scaleENERy(-2,*,iz)); RFT(scaleENERy(-1,*,iz)) FOR ALL iz
-          DO WITH phiR(iyc,ix,iz).VISC: 
-            xx = ~ -2*ni*scaleENERy(-1,*,iz).REALIFIED(ix) 
+          DO WITH phiR(iyc,ix,iz).VISC:
+            xx = ~ -2*ni*scaleENERy(-1,*,iz).REALIFIED(ix)
             zz = ~ -2*ni*scaleENERy(-2,*,iz).REALIFIED(ix)
           FOR ALL iz AND ix=0 TO 2*nxd-1
         ! All other terms
           ARRAY(0..nxd-1,0..nzd-1) OF STRUCTURE(COMPLEX uv,pv,uuu,uuv,uuw,vvu,vvv,vvw,wwu,wwv,www,uvu,uvv,uwu,uww,vwv,vww) R=0
           convolutions(V(*,*,iyc),VVd(*,*,2))
           LOOP FOR ix = 0 TO nx
-            DO WITH V(ix,iz,iyc), VVd(ix,izd,2), R(ix,izd):  
-              uv= u|v;  pv=p(ix,iz,iyc)|v;    uuu=uu|u;  uuv=uu|v;  uuw=uu|w;  vvu=vv|u;  vvv=vv|v;  vvw=vv|w;   
-              wwu=ww|u;  wwv=ww|v;  www=ww|w; uvu=uv|u;  uvv=uv|v;  uwu=uw|u;  uww=uw|w;  vwv=vw|v;  vww=vw|w;    
+            DO WITH V(ix,iz,iyc), VVd(ix,izd,2), R(ix,izd):
+              uv= u|v;  pv=p(ix,iz,iyc)|v;    uuu=uu|u;  uuv=uu|v;  uuw=uu|w;  vvu=vv|u;  vvv=vv|v;  vvw=vv|w;
+              wwu=ww|u;  wwv=ww|v;  www=ww|w; uvu=uv|u;  uvv=uv|v;  uwu=uw|u;  uww=uw|w;  vwv=vw|v;  vww=vw|w;
             FOR iz=-nz TO nz
             WITH R(ix,*):  INLINE LOOP FOR iii IN (uv,pv,uuu,uuv,uuw,vvu,vvv,vvw,wwu,wwv,www,uvu,uvv,uwu,uww,vwv,vww); IFT(iii); REPEAT
           REPEAT LOOP
-          DO WITH R(*,iz): INLINE LOOP FOR iii IN (uv,pv,uuu,uuv,uuw,vvu,vvv,vvw,wwu,wwv,www,uvu,uvv,uwu,uww,vwv,vww); RFT(iii); REPEAT; FOR ALL iz 
+          DO WITH R(*,iz): INLINE LOOP FOR iii IN (uv,pv,uuu,uuv,uuw,vvu,vvv,vvw,wwu,wwv,www,uvu,uvv,uwu,uww,vwv,vww); RFT(iii); REPEAT; FOR ALL iz
           DO WITH phiR(iyc,ix,iz).TURB, phiC(iyc,ix,iz),  meandata(iyc):
 #define Rturb(f,g) ( pR(R,f) - mR(R,f) + 2*pR(R,g) - 2*mR(R,g) + R0(R,f) - R0(R,g) )
 #define Cturb(f,g) ( pR(R,f) + mR(R,f) - 2*pR(R,g) - 2*mR(R,g) + R0(R,f) + R0(R,g) )
@@ -132,20 +132,20 @@ LOOP files FOR if=nfmin TO nfmax BY dn
             TURB = ~ + 0.5*[ Cturb(uuv,uvu) + Cturb(vvv,vvv) + Cturb(wwv,vww) ]
             PRES = ~ + 2*[ 2*R0(R,pv) - pR(R,pv) - mR(R,pv) ]
             scalePROD(iyc,ix,iz) = ~ -2*[ 2*R0(R,uv) - pR(R,uv) - mR(R,uv)]*Uy
-          FOR ix=0 TO 2*nxd-1 AND iz=0 TO nzd-1      
+          FOR ix=0 TO 2*nxd-1 AND iz=0 TO nzd-1
         REPEAT planes
 REPEAT files
 
 ! Ensemble averaging
 ! ----------------------------
 WITH phiC: scalePROD=~/nftot; scaleENER=~/nftot; PRES=~/nftot; TURB=~/nftot;
-WITH phiR: 
-           TURB.xx=~/nftot; TURB.yy=~/nftot; TURB.zz=~/nftot; 
-           VISC.xx=~/nftot; VISC.yy=~/nftot; VISC.zz=~/nftot; 
-           MEAN.xx=~/nftot; MEAN.yy=~/nftot; MEAN.zz=~/nftot; 
+WITH phiR:
+           TURB.xx=~/nftot; TURB.yy=~/nftot; TURB.zz=~/nftot;
+           VISC.xx=~/nftot; VISC.yy=~/nftot; VISC.zz=~/nftot;
+           MEAN.xx=~/nftot; MEAN.yy=~/nftot; MEAN.zz=~/nftot;
 
 ! Caompute terms which need final differentiation (phiC.VISC)
-! ----------------------------		
+! ----------------------------
 DO WITH phiC(iyc,ix,iz), derivs_standalone(iyc):
   VISC = -0.5*ni*[SUM d1(i)*scaleENER(iyc+i,ix,iz) FOR i=-2 TO 2]
 FOR iyc=nyl TO nyh AND ix=0 TO 2*nxd-1 AND iz=0 TO nzd-1
