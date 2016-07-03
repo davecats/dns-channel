@@ -1,0 +1,229 @@
+SUBROUTINE compute_pressure(ARRAY(*,*,*) OF VELOCITY vel; POINTER TO ARRAY(*,*,*) OF COMPLEX pres) FOLLOWS
+SUBROUTINE solve_dirichelet(ARRAY(*) OF COMPLEX hp; COMPLEX pres_up, pres_down; REAL k2; POINTER TO ARRAY(*) OF COMPLEX pres) FOLLOWS
+SUBROUTINE solve_neumann(ARRAY(*) OF COMPLEX hp; COMPLEX dpdy_down; COMPLEX integral; POINTER TO ARRAY(*) OF COMPLEX pres) FOLLOWS
+
+MODULE poisson_solver
+
+
+SUBROUTINE compute_pressure(ARRAY(*,*,*) OF VELOCITY vel; POINTER TO ARRAY(*,*,*) OF COMPLEX pres)
+!
+! Solves Poisson's equation for the pressure field.
+!
+! Input: velocity field in primitive variables u, v, w
+! Output: pressure field
+! Both input and output are ARRAY(0..nx,-nz..nz,nyl-2..nyh+2)
+!
+! It is assumed that the spatial average of the pressure is constant = 0
+!
+! This subroutine DOES NOT provide a parallel solution of the Poisson problem
+! (should be used in post-processing, since the pressure field can always be
+!  computed 'a posteriori')
+	
+
+!pres=0
+
+
+! Definitions
+!DERIVS=STRUCTURE(COMPLEX ux, uy, uz, vx, vy, vz, wx, wy, wz)
+ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) OF DERIVS velder=0
+ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) OF COMPLEX hp=0
+ARRAY(0..nxd-1,0..nzd-1) OF DERIVS velderd=0
+ARRAY(0..nxd-1,0..nzd-1) OF COMPLEX hpd=0
+COMPLEX pres_up, pres_down, dpdy_down
+
+
+! Fourier coefficients of spatial derivatives
+LOOP FOR ix=0 TO nx AND iz=-nz TO nz 
+	deriv(vel(ix,iz,*).u.REAL,velder(ix,iz,*).uy.REAL); LeftLUDivStep2(velder(ix,iz,*).uy.REAL,D0mat)
+	deriv(vel(ix,iz,*).u.IMAG,velder(ix,iz,*).uy.IMAG); LeftLUDivStep2(velder(ix,iz,*).uy.IMAG,D0mat)
+	deriv(vel(ix,iz,*).v.REAL,velder(ix,iz,*).vy.REAL); LeftLUDivStep2(velder(ix,iz,*).vy.REAL,D0mat)
+	deriv(vel(ix,iz,*).v.IMAG,velder(ix,iz,*).vy.IMAG); LeftLUDivStep2(velder(ix,iz,*).vy.IMAG,D0mat)
+	deriv(vel(ix,iz,*).w.REAL,velder(ix,iz,*).wy.REAL); LeftLUDivStep2(velder(ix,iz,*).wy.REAL,D0mat)
+	deriv(vel(ix,iz,*).w.IMAG,velder(ix,iz,*).wy.IMAG); LeftLUDivStep2(velder(ix,iz,*).wy.IMAG,D0mat)
+
+	alfa=alfa0*ix; beta=beta0*iz
+	LOOP FOR iy=nyl-2 TO nyh+2 WITH velder(ix,iz,iy)
+		ux=I*alfa*vel(ix,iz,iy).u
+		vx=I*alfa*vel(ix,iz,iy).v
+		wx=I*alfa*vel(ix,iz,iy).w
+		uz=I*beta*vel(ix,iz,iy).u
+		vz=I*beta*vel(ix,iz,iy).v
+		wz=I*beta*vel(ix,iz,iy).w
+	REPEAT
+REPEAT 
+
+
+! Computing nonlinear terms
+LOOP FOR iy=nyl-2 TO nyh+2
+	! Setting to zero arrays for dealiasing
+	DO WITH velderd(ix,iz): ux=0; uy=0; uz=0; vx=0; vy=0; vz=0; wx=0; wy=0; wz=0; FOR ALL ix,iz
+	hpd=0
+	
+	! Dealiasing derivatives
+	LOOP FOR ix=0 TO nx
+		DO velderd(ix,iz) = velder(ix,iz,iy) FOR iz=0 TO nz
+		DO velderd(ix,nzd+iz) = velder(ix,iz,iy) FOR iz=-nz TO -1
+	REPEAT
+	DO WITH velderd(ix,*): IFT(ux); IFT(uy); IFT(uz); IFT(vx); IFT(vy); IFT(vz); IFT(wx); IFT(wy); IFT(wz) FOR ALL ix
+	DO WITH velderd(*,iz): RFT(ux); RFT(uy); RFT(uz); RFT(vx); RFT(vy); RFT(vz); RFT(wx); RFT(wy); RFT(wz) FOR ALL iz
+
+	LOOP FOR ALL ix,iz WITH velderd(ix,iz):
+hpd(ix,iz).REAL = 2*(ux.REAL*vy.REAL+vy.REAL*wz.REAL+ux.REAL*wz.REAL-vx.REAL*uy.REAL-wx.REAL*uz.REAL-wy.REAL*vz.REAL)
+hpd(ix,iz).IMAG = 2*(ux.IMAG*vy.IMAG+vy.IMAG*wz.IMAG+ux.IMAG*wz.IMAG-vx.IMAG*uy.IMAG-wx.IMAG*uz.IMAG-wy.IMAG*vz.IMAG)
+	REPEAT
+	DO HFT(hpd(*,iz)) FOR ALL iz
+	DO FFT(hpd(ix,*)) FOR ALL ix
+
+	! Recovering nonlinear term
+	LOOP FOR ix=0 TO nx
+		DO hp(ix,iz,iy) = hpd(ix,iz) FOR iz=0 TO nz
+		DO hp(ix,iz,iy) = hpd(ix,nzd+iz) FOR iz=-nz TO -1
+	REPEAT	
+REPEAT
+
+
+! Solving for coefficient (0,0) (Neumann problem) 
+dpdy_down=0
+DO dpdy_down = ~ + ni*d240(id)*vel(0,0,id+1).v FOR id=-2 TO 2
+solve_neumann(hp(0,0,*), dpdy_down, 0, pres(0,0,*))
+
+
+! Solving for coefficient (alfa,beta) (Dirichelet problem)
+LOOP FOR ix=0 TO nx AND iz=-nz TO nz EXCEPT ix=0 AND iz=0
+	alfa = alfa0*ix; beta = beta0*iz; k2 = alfa^2 + beta^2
+	pres_up = calcpn(ix,iz); pres_down = calcp0(ix,iz)
+
+	solve_dirichelet(hp(ix,iz,*), pres_up, pres_down, k2, pres(ix,iz,*))
+REPEAT
+
+
+
+END compute_pressure
+
+
+SUBROUTINE solve_dirichelet(ARRAY(*) OF COMPLEX hp; COMPLEX pres_up, pres_down; REAL k2; POINTER TO ARRAY(*) OF COMPLEX pres)
+! 
+! Solves the two-point boundary value problem for the pressure Fourier coefficient
+!
+! Input:  ARRAY(-1..ny+1) OF COMPLEX hp
+!         COMPLEX pres_up, pres_down
+!	  REAL k2
+! Output: ARRAY(-1..ny+1) OF COMPLEX pres
+!
+! Note: fourth-order extrapolation is used to compute pres(-1) and pres(ny+1)
+!
+
+pres=0
+
+! Definitions
+ARRAY(1..ny-1) OF COMPLEX tn=0, sol=0
+ARRAY(1..ny-1,1..ny-1) OF REAL mat=0
+
+
+! Building matrix
+LOOP FOR iy=3 TO ny-3
+	DO WITH derivatives(iy): mat(iy,iy+id) = d2(id) - k2*d0(id) FOR id=-2 TO 2
+REPEAT
+DO WITH derivatives(2): mat(2,2+id) = d2(id) - k2*d0(id) FOR id=-1 TO 2
+DO WITH derivatives(ny-2): mat(ny-2,ny-2+id) = d2(id) - k2*d0(id) FOR id=-2 TO 1
+WITH derivatives(1):
+	mat(1,1) = (d2(0)-d2(-2)/d4(-2)*d4(0))-k2*(d0(0)-d0(-2)/d4(-2)*d4(0)); 
+	mat(1,2) = (d2(1)-d2(-2)/d4(-2)*d4(1))-k2*(d0(1)-d0(-2)/d4(-2)*d4(1)); 
+	mat(1,3) = (d2(2)-d2(-2)/d4(-2)*d4(2))-k2*(d0(2)-d0(-2)/d4(-2)*d4(2));
+WITH derivatives(ny-1):
+	mat(ny-1,ny-3) = (d2(-2)-d2(2)/d4(2)*d4(-2)) - k2*(d0(-2)-d0(2)/d4(2)*d4(-2))
+	mat(ny-1,ny-2) = (d2(-1)-d2(2)/d4(2)*d4(-1)) - k2*(d0(-1)-d0(2)/d4(2)*d4(-1))
+	mat(ny-1,ny-1) = (d2(0)-d2(2)/d4(2)*d4(0)) - k2*(d0(0)-d0(2)/d4(2)*d4(0))
+
+
+! Building right hand side
+LOOP FOR iy=1 TO ny-1
+	DO tn(iy) = ~ + derivatives(iy).d0(id) * hp(iy+id) FOR id=-2 TO 2
+REPEAT
+WITH derivatives(2): tn(2) = ~ - (d2(-2) - k2*d0(-2)) * pres_down
+WITH derivatives(ny-2): tn(ny-2) = ~ - (d2(2) - k2*d0(2)) * pres_up
+WITH derivatives(1): tn(1) = ~ - [(d2(-1)-d2(-2)/d4(-2)*d4(-1)) - k2*(d0(-1)-d0(-2)/d4(-2)*d4(-1))] * pres_down
+WITH derivatives(ny-1) : tn(ny-1) = ~ - [(d2(1)-d2(2)/d4(2)*d4(1)) - k2*(d0(1)-d0(2)/d4(2)*d4(1))] * pres_up
+
+
+! Solving linear system and returning solution
+LUdecomp mat
+sol.REAL = mat\tn.REAL
+sol.IMAG = mat\tn.IMAG
+
+DO pres(iy) = sol(iy) FOR iy=1 TO ny-1
+pres(0) = pres_down;
+pres(ny) = pres_up;
+DO WITH derivatives(1): pres(-1) = ~ - d4(id)/d4(-2)*pres(id+1) FOR id=-1 TO 2
+DO WITH derivatives(ny-1): pres(ny+1) = ~ -d4(id)/d4(2)*pres(ny+id-1) FOR id=-2 TO 1
+
+
+END solve_dirichelet
+
+
+SUBROUTINE solve_neumann(ARRAY(*) OF COMPLEX hp; COMPLEX dpdy_down; COMPLEX integral; POINTER TO ARRAY(*) OF COMPLEX pres)
+!
+! Solves Neumann-integral problem for the pressure Fourier coefficient (0,0)
+!
+! Input:  ARRAY(-1..ny+1) OF COMPLEX hp
+!	  COMPLEX dpdy_up  	(Neumann boundary condition, lower wall)
+! 	  COMPLEX integral	(Integral condition)
+! Output: ARRAY(-1..ny+1) OF COMPLEX pres
+
+pres=0
+
+! Definitions
+ARRAY(0..ny) OF COMPLEX tn=0, sol=0
+ARRAY(0..ny,0..ny) OF REAL mat=0
+
+
+! Building matrix
+LOOP FOR iy=2 TO ny-2
+	DO WITH derivatives(iy): mat(iy,iy+id) = d2(id) FOR id=-2 TO 2
+REPEAT
+DO WITH derivatives(1): mat(1,1+id) = d2(id) - d2(-2)/d140(-2)*d140(id) FOR id=-1 TO 2
+DO WITH derivatives(ny-1): mat(ny-1,ny-1+id) = d2(id) - d2(2)/d4(2)*d4(id) FOR id=-2 TO 1  
+LOOP FOR iy=1 TO ny-1 BY 2
+	yp1=y(iy+1)-y(iy); ym1=y(iy-1)-y(iy)
+	a1=-1/3*ym1+1/6*yp1+1/6*yp1*yp1/ym1
+	a3=+1/3*yp1-1/6*ym1-1/6*ym1*ym1/yp1
+	a2=yp1-ym1-a1-a3
+	mat(ny,iy-1) = ~ + a1
+	mat(ny,iy) = ~ + a2
+	mat(ny,iy+1) = ~ + a3
+REPEAT
+DO mat(0,id+1) = d240(id) - d240(-2)/d140(-2)*d140(id) FOR id=-1 TO 2
+
+
+! Building right hand side
+LOOP FOR iy=1 TO ny-1
+	DO tn(iy) = ~ + derivatives(iy).d0(id) * hp(iy+id) FOR id=-2 TO 2
+REPEAT
+tn(1) = ~ - derivatives(1).d2(-2) / d140(-2) * dpdy_down
+tn(ny) = integral
+tn(0) = hp(0); tn(0) = ~ - d240(-2)/d140(-2) * dpdy_down
+ 
+
+! Solution
+LUdecomp mat
+sol.REAL = mat\tn.REAL
+sol.IMAG = mat\tn.IMAG
+
+DO pres(iy) = sol(iy) FOR iy=0 TO ny
+DO pres(-1) = ~ - d140(id)/d140(-2)*pres(id+1) FOR id=-1 TO 2; pres(-1) = ~ + dpdy_down / d140(-2)
+DO WITH derivatives(ny-1): pres(ny+1) = ~ - d4(id)/d4(2) * pres(ny-1+id) FOR id=-2 TO 1
+
+
+END solve_neumann
+
+
+
+END poisson_solver
+
+
+
+
+
+
+
+

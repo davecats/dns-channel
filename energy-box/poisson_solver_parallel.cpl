@@ -67,9 +67,8 @@ SUBROUTINE solve_dirichelet(ARRAY(*) OF COMPLEX hp; COMPLEX pres_up, pres_down; 
 pres=0
 
 ! Definitions
-ARRAY(1..ny-1) OF COMPLEX tn=0, sol=0
+ARRAY(1..ny-1) OF COMPLEX rhs=0,sol=0
 ARRAY(1..ny-1,1..ny-1) OF REAL mat=0
-
 
 ! Building matrix
 LOOP FOR iy=3 TO ny-3
@@ -89,18 +88,18 @@ WITH fderivatives(ny-1):
 
 ! Building right hand side
 LOOP FOR iy=1 TO ny-1
-	DO tn(iy) = ~ + fderivatives(iy).d0(id) * hp(iy+id) FOR id=-2 TO 2
+	DO rhs(iy) = ~ + fderivatives(iy).d0(id) * hp(iy+id) FOR id=-2 TO 2
 REPEAT
-WITH fderivatives(2): tn(2) = ~ - (d2(-2) - k2*d0(-2)) * pres_down
-WITH fderivatives(ny-2): tn(ny-2) = ~ - (d2(2) - k2*d0(2)) * pres_up
-WITH fderivatives(1): tn(1) = ~ - [(d2(-1)-d2(-2)/d4(-2)*d4(-1)) - k2*(d0(-1)-d0(-2)/d4(-2)*d4(-1))] * pres_down
-WITH fderivatives(ny-1) : tn(ny-1) = ~ - [(d2(1)-d2(2)/d4(2)*d4(1)) - k2*(d0(1)-d0(2)/d4(2)*d4(1))] * pres_up
+WITH fderivatives(2): rhs(2) = ~ - (d2(-2) - k2*d0(-2)) * pres_down
+WITH fderivatives(ny-2): rhs(ny-2) = ~ - (d2(2) - k2*d0(2)) * pres_up
+WITH fderivatives(1): rhs(1) = ~ - [(d2(-1)-d2(-2)/d4(-2)*d4(-1)) - k2*(d0(-1)-d0(-2)/d4(-2)*d4(-1))] * pres_down
+WITH fderivatives(ny-1) : rhs(ny-1) = ~ - [(d2(1)-d2(2)/d4(2)*d4(1)) - k2*(d0(1)-d0(2)/d4(2)*d4(1))] * pres_up
 
 
 ! Solving linear system and returning solution
 LUdecomp mat
-sol.REAL = mat\tn.REAL
-sol.IMAG = mat\tn.IMAG
+sol.REAL = mat\rhs.REAL
+sol.IMAG = mat\rhs.IMAG
 
 DO pres(iy) = sol(iy) FOR iy=1 TO ny-1
 pres(0) = pres_down;
@@ -124,7 +123,7 @@ SUBROUTINE solve_neumann(ARRAY(*) OF COMPLEX hp; COMPLEX dpdy_down; COMPLEX inte
 pres=0
 
 ! Definitions
-ARRAY(0..ny) OF COMPLEX tn=0, sol=0
+ARRAY(0..ny) OF COMPLEX rhs=0, sol=0
 ARRAY(0..ny,0..ny) OF REAL mat=0
 
 
@@ -148,17 +147,17 @@ DO mat(0,id+1) = fd240(id) - fd240(-2)/fd140(-2)*fd140(id) FOR id=-1 TO 2
 
 ! Building right hand side
 LOOP FOR iy=1 TO ny-1
-	DO tn(iy) = ~ + fderivatives(iy).d0(id) * hp(iy+id) FOR id=-2 TO 2
+	DO rhs(iy) = ~ + fderivatives(iy).d0(id) * hp(iy+id) FOR id=-2 TO 2
 REPEAT
-tn(1) = ~ - fderivatives(1).d2(-2) / fd140(-2) * dpdy_down
-tn(ny) = integral
-tn(0) = hp(0); tn(0) = ~ - fd240(-2)/fd140(-2) * dpdy_down
+rhs(1) = ~ - fderivatives(1).d2(-2) / fd140(-2) * dpdy_down
+rhs(ny) = integral
+rhs(0) = hp(0); rhs(0) = ~ - fd240(-2)/fd140(-2) * dpdy_down
 
 
 ! Solution
 LUdecomp mat
-sol.REAL = mat\tn.REAL
-sol.IMAG = mat\tn.IMAG
+sol.REAL = mat\rhs.REAL
+sol.IMAG = mat\rhs.IMAG
 
 DO pres(iy) = sol(iy) FOR iy=0 TO ny
 DO pres(-1) = ~ - fd140(id)/fd140(-2)*pres(id+1) FOR id=-1 TO 2; pres(-1) = ~ + dpdy_down / fd140(-2)

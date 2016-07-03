@@ -1,0 +1,119 @@
+!
+! This program computes the GSL profile for several phases
+! out of several DNS fields of channels modified by streamwise-travelling
+! waves of spanwise wall velocity
+!
+
+gamma=0
+outinterv=0
+!USE rtchecks
+USE ../dnsdata
+USE ../dnsdirect
+USE ../tke/convenience
+
+! Inputs
+! -------------------------------------- 
+width_of_bins_deg=10
+
+! Definitions 
+! --------------------------------------
+INTEGER nfmin, nfmax, dn, nftot
+ASK nfmin, nfmax, dn
+nftot=nfmax-nfmin+1
+
+SHARED REAL A, A_f, omega, delta
+INTEGER nm_x, nm_z
+FILE in_parameters_wave=OPEN("parameters_wave.in")
+READ BY NAME FROM in_parameters_wave A, A_f, omega, nm_x, nm_z, delta
+
+REAL resx,resz
+resx = 2*PI/(alfa0*(2*nxd)); resz = 2*PI/(beta0*nzd)
+
+ARRAY(0..ny DIV 2) OF STRUCTURE(REAL u,w) meanvel=0		     !! Mean velocity profile
+SHARED ARRAY(0..ny DIV 2,0..dn-1) OF STRUCTURE(REAL u,w) phasevel=0  !! Phase-averaged mean velocity profile
+SHARED ARRAY(0..dn-1) OF INTEGER cells_in_bin=0                      !! Number of cells in a bin
+
+width_of_bins=width_of_bins_deg/360
+INTEGER FUNCTION phase(INTEGER ix) ! Determine the phase for a certain coordinate
+  REAL phi=(alfa0*nm_x*ix*resx-omega*time)/(2*PI); phi=~-FLOOR(phi);
+  RESULT=-1; LOOP FOR i=1 TO dn
+               IF ABS{phi-[(i-1.0)/dn]}<=width_of_bins THEN RESULT=i-1;
+             REPEAT
+             IF ABS[phi-1.0]<width_of_bins THEN RESULT=0
+END phase
+
+! Compute mean velocity
+! --------------------------------------
+LOOP mean FOR n=nfmin TO nfmax
+  fieldname = 'Field'n'.fld';
+  diskfield = OPEN(fieldname);
+  WITH diskfield:
+  V(0,0,*).u.REAL=uavimage(miny..maxy)
+  V(0,0,*).w.REAL=wavimage(miny..maxy)
+  CLOSE diskfield
+  LOOP FOR iy=0 TO ny DIV 2
+    WITH meanvel(iy):
+    u=~+1/2*[V(0,0,iy).u.REAL + V(0,0,ny-iy).u.REAL]
+    w=~+1/2*[V(0,0,iy).w.REAL + V(0,0,ny-iy).w.REAL]
+  REPEAT LOOP    
+REPEAT mean
+DO WITH meanvel(iy): u=~/nftot; w=~/nftot FOR iy=0 TO ny DIV 2
+
+! Compute GSL
+! --------------------------------------
+LOOP files FOR n=nfmin TO nfmax
+
+  ! Read Field
+  fieldname = WRITE('Field'n'.fld'); WRITE fieldname
+  diskfield = OPEN(fieldname);
+  read_field(fieldname)
+  vetaTOuvw
+  ! Count how many ix-slices are in a bin corresponding to a phase
+  cells_in_bin=0; DO 
+                    IF phase(ix)>-1 THEN INC cells_in_bin(phase(ix))
+                  FOR ix=0 TO 2*nxd-1; 
+  
+  V(0,0,miny..maxy)=0  ! XXX Remove mean? 
+  ! Convert to space
+  LOOP FOR iy=0 TO ny
+      LOOP FOR ix=ismp*(nx+1) DIV nsmp TO (ismp+1)*(nx+1) DIV nsmp -1
+        Vd(ix,0..nz)=V(ix,0..nz,iy)
+        Vd(ix,nz+1..nzd-nz-1)=0
+        Vd(ix,nzd+(-nz..-1))=V(ix,-nz..-1,iy)
+        WITH Vd(ix,*): IFT(u); IFT(v); IFT(w);
+      REPEAT
+      IF ismp=0 THEN Vd(nx+1..nxd-1)=0
+      SYNC(ismp,nsmp)
+      DO WITH Vd(*,iz): RFT(u); RFT(v); RFT(w); 
+      FOR iz=ismp*(nzd) DIV nsmp TO (ismp+1)*(nzd) DIV nsmp -1
+      SYNC(ismp,nsmp)
+  ! Average GSL
+      IF ismp=0 THEN
+        LOOP FOR ix=0 TO 2*nxd-1 
+          p=phase(ix);
+          LOOP FOR iz=0 TO nzd-1
+            IF p>-1 THEN 
+                WITH phasevel(IF iy<=ny DIV 2 THEN iy ELSE ny-iy,p): 
+                    u=~+Vd(*,iz).u.REALIFIED(ix)/(2*cells_in_bin(p)*nzd)
+                    w=~+Vd(*,iz).w.REALIFIED(ix)/(2*cells_in_bin(p)*nzd)
+	    END IF
+	  REPEAT
+	REPEAT
+      END IF
+  REPEAT
+REPEAT files
+
+! Output
+! --------------------------------------
+outfile = CREATE("mean.dat")
+WRITE TO outfile "y","U","W"
+DO WITH meanvel(iy): WRITE TO outfile y(iy), u, w FOR iy = 0 TO ny DIV 2
+CLOSE outfile
+
+outfile = CREATE("phaseU.dat")
+DO WITH phasevel(iy,*): WRITE TO outfile y(iy), u/nftot FOR iy = 0 TO ny DIV 2
+CLOSE outfile
+
+outfile = CREATE("phaseW.dat")
+DO WITH phasevel(iy,*): WRITE TO outfile y(iy), w/nftot FOR iy = 0 TO ny DIV 2
+CLOSE outfile
