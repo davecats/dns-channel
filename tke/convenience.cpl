@@ -1,5 +1,6 @@
 DERIVS = STRUCTURE(COMPLEX ux,uy,uz,vx,vy,vz,wx,wy,wz)
 DERPRODS = STRUCTURE(COMPLEX ux2,vx2,wx2,uy2,vy2,wy2,uz2,vz2,wz2)
+DERPRODSEXT = STRUCTURE(COMPLEX ux2,vx2,wx2,uy2,vy2,wy2,uz2,vz2,wz2,uxvx,uyvy,uzvz,uxwx,uywy,uzwz,vxwx,vywy,vzwz)
 
 STRUCTURE[ARRAY(-2..2) OF REAL d1,d2] derivs_standalone(MAX(1,nyl-2)..MIN(ny-1,nyh+2))
 INLINE REAL FUNCTION D1(REAL f(*)) = d1(-2)*f(-2)+d1(-1)*f(-1)+d1(0)*f(0)+d1(1)*f(1)+d1(2)*f(2)

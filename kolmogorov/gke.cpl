@@ -17,9 +17,9 @@ WRITE BY NAME 2*nxd,nzd
 
 ! Parameters
 ! -----------------------------
-nfmin=1001
-nfmax=5001
-dn=1000
+nfmin=1
+nfmax=8
+dn=1
 
 ! -----------------------------
 INTEGER nftot=[(nfmax-nfmin) DIV dn]+1
@@ -32,16 +32,16 @@ FLUXVEC = STRUCTURE(REAL xx, yy, zz)
 SCALEFLUX = STRUCTURE(FLUXVEC TURB, MEAN, VISC)
 DIVSCALEFLUX = STRUCTURE(REAL TURB, MEAN, VISC)
 SPACEFLUX = STRUCTURE(REAL TURB, PRES, VISC)
-MEANTERMS = STRUCTURE(REAL U,W,Uy,Wy,Uyy,Wyy) ! tke.cpl
-TKETERMS = STRUCTURE(REAL PRuv,PRvw,PDISS,TDIFF,PDIFF,VDIFF,PHI_TDIFF,PHI_PDIFF,PHI_VDIFF) ! tke.cpl
-MKETERMS = STRUCTURE(REAL MPROD,TPRuv,TPRvw,TMDIF,MMDIF,DISSu,DISSw,PHI_TMDIF,PHI_MMDIF) ! tke.cpl
+MEANTERMS = STRUCTURE(REAL U,W,Uy,Wy,Uyy,Wyy) ! uiuj.cpl
+MKETERMS = STRUCTURE(REAL pump,produv,prodvw,ttrsp,vdiff,dissU,dissW,PHIttrsp,PHIvdiff) ! uiuj.cpl
+BALANCE = STRUCTURE(ARRAY(1..6) OF REAL var,prod,psdiss,ttrsp,vdiff,pstrain,ptrsp,PHIttrsp,PHIvdiff,PHIptrsp) ! uiuj.cpl
 
 ARRAY(nyl-2..nyh+2,0..2*nxd-1,0..nzd-1) OF REAL scalePROD=0
 ARRAY(nyl-2..nyh+2) OF REAL scaleDISS=0
 ARRAY(nyl-2..nyh+2,0..2*nxd-1,0..nzd-1) OF REAL scaleENER=0
 ARRAY(nyl-2..nyh+2,0..2*nxd-1,0..nzd-1) OF SPACEFLUX phiC=0
 ARRAY(nyl-2..nyh+2,0..2*nxd-1,0..nzd-1) OF SCALEFLUX phiR=0
-ARRAY(nyl-2..nyh+2) OF MEANTERMS meandata=0
+ARRAY(nyl-2..nyh+2) OF MEANTERMS mean=0
 
 ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) OF COMPLEX p=0
 POINTER TO ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) OF DERIVS Vder
@@ -60,15 +60,15 @@ POINTER TO STORED ARRAY(-1..ny+1,0..2*nxd-1,0..nzd-1) OF SPACEFLUX phiCimage
 ! Load MEANTERMS and TKETERMS
 ! ------------------------------
 POINTER TO STORED STRUCTURE[
-        ARRAY(-1..ny+1) OF MEANTERMS meandataimage
-        ARRAY(-1..ny+1) OF TKETERMS tkedataimage
-        ARRAY(-1..ny+1) OF MKETERMS mkedataimage
-] tkeimage
+        ARRAY(-1..ny+1) OF MEANTERMS meandata
+        ARRAY(-1..ny+1) OF MKETERMS mkedata
+        ARRAY(-1..ny+1) OF BALANCE uiujdata
+] uiujimage
 
 IF NOT first THEN READ FROM prev
-        tkeimage=OPEN("tke.bin")
-        WITH tkeimage: meandata=meandataimage(nyl-2..nyh+2); scaleDISS=-4*tkedataimage(nyl-2..nyh+2).PDISS
-        CLOSE(tkeimage)
+        uiujimage=OPEN("uiuj.bin")
+        WITH uiujimage: mean=meandata(nyl-2..nyh+2); DO scaleDISS(iy)=~-2*(uiujdata(iy).psdiss(i)) FOR iy=nyl-2 TO nyl+2 AND i=1 TO 3
+        CLOSE(uiujimage)
 IF NOT last THEN WRITE TO next
 
 #define pR(A,f) A(*,iz).f.REALIFIED(ix)
@@ -80,37 +80,40 @@ IF has_terminal THEN WRITE "Computing Kolmogorov Equation..."
 LOOP files FOR if=nfmin TO nfmax BY dn
         ! Loading data
         STRING field_name = WRITE("Field"if".fld")
-        read_field_parallel(field_name); V(0,0,*)=0
+        read_field_parallel(field_name)
+        ! Compute fluctuating field
+        WITH mean(*),V(0,0,*): u.REAL=~-U; w.REAL=~-W
         ! Derivatives and pressure
         NEW Vder; Vder=0; compute_pressure(Vder,p); FREE(Vder)
         LOOP planes FOR iyc=nyl TO nyh
         ! Compute phiR.VISC and scaleENER
-          ARRAY(-2..2,0..nxd-1,0..nzd-1) OF COMPLEX scaleENERy=0
+          ARRAY(-2..2,0..nxd-1,0..nzd-1) OF STRUCTURE(COMPLEX uu,vv,ww) G=0
           LOOP dplanes FOR ry=-2 TO 2
-            ARRAY(0..nxd-1,0..nzd-1) OF STRUCTURE(COMPLEX uu,vv,ww) G=0
             LOOP FOR ix = 0 TO nx
-              DO WITH V(ix,iz,*), G(ix,izd):     uu=u(iyc-ry)|u(iyc+ry); vv=v(iyc-ry)|v(iyc+ry); ww=w(iyc-ry)|w(iyc+ry) FOR iz=-nz TO nz
-              WITH G(ix,*): IFT(uu); IFT(vv); IFT(ww)
+              DO WITH V(ix,iz,*), G(ry,ix,izd):     uu=u(iyc)|u(iyc+ry); vv=v(iyc)|v(iyc+ry); ww=w(iyc)|w(iyc+ry) FOR iz=-nz TO nz
+              WITH G(ry,ix,*): IFT(uu); IFT(vv); IFT(ww)
             REPEAT LOOP
-            DO WITH G(*,iz): RFT(uu); RFT(vv); RFT(ww) FOR ALL iz
-            DO
-              scaleENERy(ry,*,iz).REALIFIED(ix) = 2*R0(G,uu) - 2*pR(G,uu) + 2*R0(G,vv) - 2*pR(G,vv) + 2*R0(G,ww) - 2*pR(G,ww)
-            FOR ix=0 TO 2*nxd-1 AND iz=0 TO nzd-1
+            DO WITH G(ry,*,iz): RFT(uu); RFT(vv); RFT(ww) FOR ALL iz
           REPEAT dplanes
-          DO scaleENER(iyc,ix,iz)=~+scaleENERy(0,*,iz).REALIFIED(ix) FOR ix=0 TO 2*nxd-1 AND ALL iz
-          DO WITH phiR(iyc,ix,iz).VISC, derivs_standalone(iyc): yy = ~ -2*ni*[SUM d1(i)*scaleENERy(i,*,iz).REALIFIED(ix) FOR i=-2 TO 2] FOR ALL iz AND ix=0 TO 2*nxd-1
-          scaleENERy(-2..-1,*,*)=0 ! x and z derivatives of scaleENERy in positions -2..-1, maybe add variables to make clearer, it's a postpro XXX
-          DO HFT(scaleENERy(0,*,iz)) FOR ALL iz
+          DO scaleENER(iyc,ix,iz)=~+2*R0(G(0),uu)-2*pR(G(0),uu)+2*R0(G(0),vv)-2*pR(G(0),vv)+2*R0(G(0),ww)-2*pR(G(0),ww) FOR ix=0 TO 2*nxd-1 AND ALL iz
+          DO WITH phiR(iyc,ix,iz).VISC, derivs_standalone(iyc):
+            !yy = ~ -2*ni*[SUM d1(i)*( pR(G(i),uu) + pR(G(i),vv) + pR(G(i),ww) )   FOR i=-2 TO 2] XXX
+            yy = ~ -2*ni*[SUM d2(i)*( 0.5*R0(G(i),uu)-0.5*pR(G(i),uu)+0.5*mR(G(i),uu)+
+                                      0.5*R0(G(i),vv)-0.5*pR(G(i),vv)+0.5*mR(G(i),vv)+
+                                      0.5*R0(G(i),ww)-0.5*pR(G(i),ww)+0.5*mR(G(i),ww) )  FOR i=-2 TO 2]
+          FOR ALL iz AND ix=0 TO 2*nxd-1
+          G(-2..-1,*,*)=0; G(0,*,*).uu=scaleENER(iyc,*,*) ! x and z derivatives of scaleENER in positions -2..-1, maybe add variables to make clearer
+          DO HFT(G(0,*,iz).uu) FOR ALL iz
           DO
-            FFT(scaleENERy(0,ix,*))
-            DO scaleENERy(-1,ix,iz)=I*alfa0*ix*scaleENERy(0,ix,iz);         scaleENERy(-2,ix,iz)=I*beta0*iz*scaleENERy(0,ix,iz); FOR iz=0 TO nz
-            DO scaleENERy(-1,ix,nzd+iz)=I*alfa0*ix*scaleENERy(0,ix,nzd+iz); scaleENERy(-2,ix,nzd+iz)=I*beta0*iz*scaleENERy(0,ix,nzd+iz); FOR iz=-nz TO -1
-            IFT(scaleENERy(-2,ix,*)); IFT(scaleENERy(-1,ix,*))
+            FFT(G(0,ix,*).uu)
+            DO G(-1,ix,iz).uu=I*alfa0*ix*G(0,ix,iz).uu;         G(-2,ix,iz).uu=I*beta0*iz*G(0,ix,iz).uu; FOR iz=0 TO nz
+            DO G(-1,ix,nzd+iz).uu=I*alfa0*ix*G(0,ix,nzd+iz).uu;  G(-2,ix,nzd+iz).uu=I*beta0*iz*G(0,ix,nzd+iz).uu; FOR iz=-nz TO -1
+            IFT(G(-2,ix,*).uu); IFT(G(-1,ix,*).uu)
           FOR ix=0 TO nx
-          DO RFT(scaleENERy(-2,*,iz)); RFT(scaleENERy(-1,*,iz)) FOR ALL iz
+          DO RFT(G(-2,*,iz).uu); RFT(G(-1,*,iz).uu) FOR ALL iz
           DO WITH phiR(iyc,ix,iz).VISC:
-            xx = ~ -2*ni*scaleENERy(-1,*,iz).REALIFIED(ix)
-            zz = ~ -2*ni*scaleENERy(-2,*,iz).REALIFIED(ix)
+            xx = ~ -2*ni*G(-1,*,iz).uu.REALIFIED(ix)
+            zz = ~ -2*ni*G(-2,*,iz).uu.REALIFIED(ix)
           FOR ALL iz AND ix=0 TO 2*nxd-1
         ! All other terms
           ARRAY(0..nxd-1,0..nzd-1) OF STRUCTURE(COMPLEX uv,pv,uuu,uuv,uuw,vvu,vvv,vvw,wwu,wwv,www,uvu,uvv,uwu,uww,vwv,vww) R=0
@@ -123,7 +126,7 @@ LOOP files FOR if=nfmin TO nfmax BY dn
             WITH R(ix,*):  INLINE LOOP FOR iii IN (uv,pv,uuu,uuv,uuw,vvu,vvv,vvw,wwu,wwv,www,uvu,uvv,uwu,uww,vwv,vww); IFT(iii); REPEAT
           REPEAT LOOP
           DO WITH R(*,iz): INLINE LOOP FOR iii IN (uv,pv,uuu,uuv,uuw,vvu,vvv,vvw,wwu,wwv,www,uvu,uvv,uwu,uww,vwv,vww); RFT(iii); REPEAT; FOR ALL iz
-          DO WITH phiR(iyc,ix,iz).TURB, phiC(iyc,ix,iz),  meandata(iyc):
+          DO WITH phiR(iyc,ix,iz).TURB, phiC(iyc,ix,iz),  mean(iyc):
 #define Rturb(f,g) ( pR(R,f) - mR(R,f) + 2*pR(R,g) - 2*mR(R,g) + R0(R,f) - R0(R,g) )
 #define Cturb(f,g) ( pR(R,f) + mR(R,f) - 2*pR(R,g) - 2*mR(R,g) + R0(R,f) + R0(R,g) )
             xx   = ~ +       Rturb(uuu,uuu) + Rturb(vvu,uvv) + Rturb(wwu,uww)
