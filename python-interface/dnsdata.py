@@ -8,14 +8,20 @@
 
 # ----------
 import numpy             as np
+from   scipy.linalg      import solve,solve_banded
 import matplotlib        as mp
 mp.use("Qt4Agg")
+import scipy             as sp
+import pyfftw            as fftw
 import matplotlib.pyplot as plt
 from   numpy   import pi
 # ----------
 
 # Define some data tiypes
 VETA = np.dtype([('v', np.complex128), ('eta', np.complex128)])
+VELOCITY = np.dtype([('u', np.complex128), ('v', np.complex128), ('w', np.complex128)])
+REALVELOCITY = np.dtype([('u', np.float64), ('v', np.float64), ('w', np.float64)])
+DERIVS = np.dtype([('d0', np.float64), ('d1', np.float64), ('d2', np.float64), ('d4', np.float64)])
 
 # Read dns.in
 with open ('dns.in','r') as in_data:
@@ -27,8 +33,8 @@ nx = int(dns_in['nx']); nz = int(dns_in['nz']); ny = dns_in['ny']
 alfa0=dns_in['alfa0'];  beta0=dns_in['beta0'];  a = dns_in['a']
 
 # Index conversion
-izd = lambda i: i+nz
-iyd = lambda i: i+1
+izd = lambda i: i+nz   # converts (-nz..nz)  to (0..2*nz)
+iyd = lambda i: i+1    # converts (-1..ny+1) to (0..ny+2)
 
 # Find nxd,nzd
 nxd=3*nx//2-1; nzd=3*nz-1;
@@ -43,18 +49,58 @@ while not fftfit(nzd): nzd += 1
 y = np.tanh(a*(2*np.arange(-1,ny+2)/ny-1))/np.tanh(a)+1
 kx = alfa0*np.arange(0,nx+1); kz = beta0*np.arange(0,nz+1)
 
+# Put data in banded-matrix form
+def banded_form(A):
+  m=np.shape(A); D=np.zeros([m[1],m[0]]); u=m[1]//2;
+  for i in range(m[0]):
+    for j in range(m[1]):
+      J=j+i-u;
+      if J>-1 and J<m[0]: D[u+i-J,J] = A[i,j]
+  return D
+
 # Define y-compact derivatives
-d1 = np.zeros([ny-1,5],np.float64); matder=np.zeros([5,5],np.float64)
-d2 = np.zeros([ny-1,5],np.float64); tnder=np.zeros([5],np.float64)
-for iy in range(1,ny):
-  for ir,ic in ( (ir,ic) for ir in range(0,5) for ic in range(0,5) ):
-    matder[ir,ic] = (y[iyd(iy-2+ic)] - y[iyd(iy)])**(4.0-np.float64(ir))
-  tnder*=0; tnder[3]=1;     d1[iy-1,:]=np.linalg.solve(matder,tnder)
-  tnder*=0; tnder[2]=2;     d2[iy-1,:]=np.linalg.solve(matder,tnder)
+der=np.zeros([ny+3,5],DERIVS); matder=np.zeros([5,5],np.float64); rhsder=np.zeros([5],np.float64); cder=np.zeros([5],np.float64)
+for iy in range(2,ny+1):
+  matder=np.fromfunction(lambda i,j: (y[iy-2+j]-y[iy])**(4.0-np.float64(i)), (5,5), dtype=int)
+  rhsder*=0; rhsder[0]=np.float64(24); der[iy,:]['d4']=solve(matder,rhsder)
+  matder=np.fromfunction(lambda i,j: (5.0-i)*(6.0-i)*(7.0-i)*(8.0-i)*((y[iy-2+j]-y[iy])**(4.0-np.float64(i))), (5,5), dtype=int)
+  rhsder*=0
+  for i in range(5): rhsder[i]=np.sum(der[iy,:]['d4']*(y[iy-2:iy+3]-y[iy])**np.float64(8-i))
+  der[iy,:]['d0']=solve(matder,rhsder);
+  matder=np.fromfunction(lambda i,j: (y[iy-2+j]-y[iy])**(4-np.float64(i)), (5,5), dtype=int)
+  rhsder*=0
+  for i in range(3): rhsder[i]=np.sum((4.0-i)*(3.0-i)*der[iy,:]['d0']*(y[iy-2:iy+3]-y[iy])**np.float64(2-i))
+  der[iy,:]['d2']=solve(matder,rhsder)
+  rhsder*=0
+  for i in range(4): rhsder[i]=np.sum((4.0-i)*der[iy,:]['d0']*(y[iy-2:iy+3]-y[iy])**np.float64(3-i))
+  der[iy,:]['d1']=solve(matder,rhsder)
+  # Bottom wall
+der[1,1]['d0']=np.float64(1.0);
+matder=np.fromfunction(lambda i,j: (y[0+j]-y[1])**(4-np.float64(i)), (5,5), dtype=int)
+rhsder=np.zeros([5],np.float64); rhsder[3]=np.float64(1.0); der[1,:]['d1']=solve(matder,rhsder)
+rhsder=np.zeros([5],np.float64); rhsder[2]=np.float64(2.0); der[1,:]['d2']=solve(matder,rhsder)
+matder=np.fromfunction(lambda i,j: (y[0+j]-y[0])**(4-np.float64(i)), (5,5), dtype=int)
+rhsder=np.zeros([5],np.float64); rhsder[3]=np.float64(1.0); der[0,:]['d1']=solve(matder,rhsder)
+rhsder=np.zeros([5],np.float64); rhsder[2]=np.float64(2.0); der[0,:]['d2']=solve(matder,rhsder)
+  # Top wall
+der[ny+1,3]['d0']=np.float64(1.0);
+matder=np.fromfunction(lambda i,j: (y[ny-2+j]-y[ny+1])**(4-np.float64(i)), (5,5), dtype=int)
+rhsder=np.zeros([5],np.float64); rhsder[3]=np.float64(1.0); der[ny+1,:]['d1']=solve(matder,rhsder)
+rhsder=np.zeros([5],np.float64); rhsder[2]=np.float64(2.0); der[ny+1,:]['d2']=solve(matder,rhsder)
+matder=np.fromfunction(lambda i,j: (y[ny-2+j]-y[ny+2])**(4-np.float64(i)), (5,5), dtype=int)
+rhsder=np.zeros([5],np.float64); rhsder[3]=np.float64(1.0); der[ny+2,:]['d1']=solve(matder,rhsder)
+rhsder=np.zeros([5],np.float64); rhsder[2]=np.float64(2.0); der[ny+2,:]['d2']=solve(matder,rhsder)
+d0mat=banded_form(der[2:ny+1,:]['d0'])
+
+# Derivate
 def deriv(d,f):
-  df = np.zeros([ny+3],np.float64)
-  for iy in range(1,ny):
-    df[iyd(iy)] = np.sum(d[iy-1,:]*f[iyd(iy)-2:iyd(iy)+3])
+  df = np.zeros(np.shape(f),f.dtype); bcast = np.ones(len(np.shape(f)),int); bcast[0]=5
+  for iy in range(0,ny+3):
+    iyc = iy*(iy>1 and iy < ny+1) + ny*(iy>=ny+1) + 2*(iy<=1)
+    df[iy,...] += np.sum(der[iy,:][d].reshape(bcast)*f[iyc-2:iyc+3,...],axis=0)
+  df[2]-=der[2,1]['d0']*df[1]+der[2,0]['d0']*df[0];             df[3]-=der[3,0]['d0']*df[1]
+  df[ny]-=der[ny,3]['d0']*df[ny+1]+der[ny,4]['d0']*df[ny+2];    df[ny-1]-=der[ny-1,4]['d0']*df[ny+1]
+  df[2:ny+1]=solve_banded((2,2),d0mat,df[2:ny+1])
   return df
 
 # Read a field file
@@ -73,3 +119,30 @@ def readfield(fname):
 # Read scalar field file
 def readscalarfield(fname):
   return np.memmap(fname,dtype=np.complex128,mode='r',shape=(ny+3,nx+1,2*nz+1),offset=(8*9+8*(ny+3)*2+16*2*((ny+3)*(nx+1)*(2*nz+1))))
+
+# Convert veta2uvw, Remember: eta=+I*beta*u-I*alfa*w
+def veta2uvw(veta):
+  uvw = np.zeros((ny+3,nx+1,2*nz+1), dtype=VELOCITY)
+  uvw['v']+=veta['v'];
+  alfa=alfa0*np.arange(nx+1).reshape(1,nx+1,1); beta=beta0*np.arange(-nz,nz+1).reshape(1,1,2*nz+1); k2=alfa*alfa+beta*beta; k2[0,0,izd(0)]=1.0
+  vy=deriv('d1',veta[...]['v'])
+  uvw[...]['u']+=1j*(alfa*vy-beta*veta[...]['eta'])/k2
+  uvw[...]['w']+=1j*(beta*vy+alfa*veta[...]['eta'])/k2
+  return uvw
+
+# Declare some arrays for Fourier transforming (XXX extend for de-aliasing)
+vplane = fftw.empty_aligned((3,nx+2,2*nz+1),dtype='complex128')
+rvplane = fftw.empty_aligned((3,2*nx+2,2*nz+1),dtype='float64')
+fft = fftw.FFTW(vplane,rvplane, axes=(-1,-2), direction='FFTW_BACKWARD')
+
+# Backward Fourier transform of a field
+def ift(F,f):
+    l=len(F.dtype.names)
+    n=F.dtype.names
+    for i in range(l):
+      vplane[i,:nx+1,0:nz+1]=F[:,nz:][n[i]];
+      vplane[i,:nx+1,nz+1:]=F[:,0:nz][n[i]];
+      vplane[i,nx+1,:]*=0
+    fft.execute()
+    for i in range(l):
+      f[...][n[i]]=rvplane[i,...]
