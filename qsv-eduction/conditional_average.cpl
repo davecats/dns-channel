@@ -1,0 +1,628 @@
+#define writetec
+!#define writefld
+#define writevtk
+gamma=0
+outinterv=0
+!USE rtchecks
+USE ../dnsdata
+USE ../dnsdirect
+USE ../tke/convenience
+USE poisson_solver
+
+INLINE FUNCTION xbound(INTEGER i)=IF i < 0 THEN i+2*nxd ELSE IF i>2*nxd-1 THEN i-2*nxd ELSE i
+INLINE FUNCTION zbound(INTEGER i)=IF i < 0 THEN i+nzd ELSE IF i>nzd-1 THEN i-nzd ELSE i
+
+! Parameters for CONDITIONAL AVERAGING (consider putting them in an external input file)
+! >>============================================================================================================
+Retau = 200; 
+lambda2th=-0.02; 
+lambda2th_meanvortex=-0.02;
+box_length_plus=200; 
+box_width_plus=60;
+box_height_plus=60;
+control_volume_length_plus=61.5;
+control_volume_width_plus=40;
+control_volume_height_plus=40;
+search_width_angle=60;
+search_heigth_angle=30;
+search_height_plus=200;
+qsv_min_length=75;
+max_vortex_heigth=21.5;
+min_vortex_heigth=17.5;
+max_vortices_per_wall=9000;
+max_tilt_angle=55;
+phi0=-4.0;
+! <<============================================================================================================
+
+ARRAY(0..20) OF CHAR fieldname, vtkname
+INTEGER nfmin, nfmax, dn, nftot
+ASK nfmin, nfmax, dn
+nftot=nfmax-nfmin+1
+FILE outfile
+SINGLE tmpu, tmpv, tmpw, tmp
+SHARED ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) OF COMPLEX pres=0
+SHARED ARRAY(0..nxd-1,0..nzd-1) OF COMPLEX pd=0 
+
+SHARED ARRAY(0..nx,-nz..nz,-1..ny+1) OF DERIVS gradV=0   	 
+SHARED ARRAY(0..nxd-1,0..nzd-1) OF DERIVS gradVd=0		     
+SHARED ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) OF COMPLEX hp=0 	     !! Auxiliary variables for pressure computation
+SHARED ARRAY(0..nxd-1,0..nzd-1) OF COMPLEX hpd=0		     !! Auxiliary variables for pressure computation
+COMPLEX pres_up, pres_down, dpdy_down				     !! Auxiliary variables for pressure computation
+SHARED ARRAY(0..2*nxd-1,0..nzd-1,0..ny) OF REAL lambda2=0            !! Lambda2 field
+SHARED ARRAY(0..2*nxd-1,0..nzd-1,0..ny) OF REAL omegax=0	     !! Streamwise vorticity
+ARRAY(0..ny DIV 2) OF STRUCTURE(REAL u,w) meanvel=0		     !! Mean velocity profile
+ARRAY(0..ny DIV 2,0..dn-1) OF STRUCTURE(REAL u,w) phasevel=0         !! Phase-averaged mean velocity profile
+SHARED ARRAY(0..ny DIV 2) OF STRUCTURE(REAL Q1,Q2,Q3,Q4) uv_quad=0   !! RSS profiles (quadrant)
+ARRAY(0..ny DIV 2) OF STRUCTURE(REAL uv) rms=0			     !! RMS profiles (total) 
+REAL aa,bb,cc,dd,ee,ff,AA,BB,CC,DD,trace
+COMPLEX lam1,lam2,lam3,Par1,Par2,Par3
+
+INTEGER xp=0, xp2=0, lxfwd, lxfwdmax=0, lxbwd, ixp, izp, midx, midz, count
+INTEGER iymax=0, izmin=0, iymin=0, search_iymin, search_iymax
+REAL lambda2min=0.0, resx, resz, tmpr, azimut, elevation, vortex_length
+INTEGER box_length, search_width, search_heigth, box_width, box_heigth, volume_length, volume_width, volume_height
+resx = 2*PI/(alfa0*(2*nxd)); resz = 2*PI/(beta0*nzd)
+
+search_width = CEILING{TAN(search_width_angle*PI/180)*resx/resz}			         !! Angle the vortex core is searched within (Jeong&Hussain 30°)
+box_length   = CEILING[box_length_plus/(resx*Retau)]; box_length = MIN(box_length, nxd)
+box_width    = CEILING[box_width_plus/(resz*Retau)];  box_width  = MIN(box_width, nzd DIV 2)
+DO INC box_heigth WHILE (y(box_heigth+1)-y(0))*Retau<box_height_plus
+volume_length = CEILING[control_volume_length_plus/(resx*Retau)]; volume_length = MIN(volume_length, nxd)
+volume_width  = CEILING[control_volume_width_plus/(resz*Retau)];  volume_width  = MIN(box_width, nzd DIV 2)
+DO INC volume_height WHILE (y(volume_height+1)-y(0))*Retau<control_volume_height_plus
+DO INC iymax WHILE (y(iymax+1)-y(0))*Retau<search_height_plus                                    !! Maximum search heigth 	
+ARRAY(-nxd..nxd, 1..2) OF INTEGER vortex_cores=0	                                         !! z,y coordinates of the centerline of a single candidate vortex
+ARRAY(0..dn-1) OF INTEGER educed=0				                                 !! Number of educed vortices
+ARRAY(1..max_vortices_per_wall,1..3) OF INTEGER vortex_centers=0                                 !! x,y,z coordinates of all educed vortices on one wall
+
+SUBROUTINE dVintegral(REAL RESULT^, f(*,*,*))
+  RESULT=0; REAL pm,trapz
+  LOOP FOR ix=-volume_length+1 TO volume_length-1 BY 2 AND iz=-volume_width+1 TO volume_width-1 BY 2
+    pm=0; trapz=0
+    LOOP FOR iy=1 TO volume_height-1 BY 2 
+      yp1=y(iy+1)-y(iy); ym1=y(iy-1)-y(iy); a1=-1/3*ym1+1/6*yp1+1/6*yp1*yp1/ym1; a3=+1/3*yp1-1/6*ym1-1/6*ym1*ym1/yp1; a2=yp1-ym1-a1-a3
+      pm=~+a1*f(ix,iz,iy-1) + a2*f(ix,iz,iy) + a3*f(ix,iz,iy+1); 
+      trapz=~+a1*f(ix-1,iz,iy-1) + a2*f(ix-1,iz,iy) + a3*f(ix-1,iz,iy+1)+a1*f(ix+1,iz,iy-1) + a2*f(ix+1,iz,iy) + a3*f(ix+1,iz,iy+1)+
+              a1*f(ix,iz-1,iy-1) + a2*f(ix,iz-1,iy) + a3*f(ix,iz-1,iy+1)+a1*f(ix,iz+1,iy-1) + a2*f(ix,iz+1,iy) + a3*f(ix,iz+1,iy+1);
+    REPEAT 
+    RESULT=~+[1/3*pm+1/6*(trapz)]*(4*resx*resz)
+  REPEAT
+END dVintegral
+
+ARRAY(-box_length..box_length,-box_width..box_width,0..box_heigth,0..dn-1) OF REAL lambdaavg=0				!! Conditionally averaged lambda2 field
+ARRAY(-box_length..box_length,-box_width..box_width,0..box_heigth,0..dn-1) OF STRUCTURE(REAL u,v,w) Vavg=0		!! Conditionally averaged velocity field
+ARRAY(-box_length..box_length,-box_width..box_width) OF STRUCTURE(REAL ux,uy,uz,vx,vy,vz,wx,wy,wz) gradVdavg=0          !! Derivative of the conditionally averaged velocity field
+ARRAY(-box_length..box_length,-box_width..box_width,0..box_heigth,0..dn-1) OF STRUCTURE(REAL Q2 Q4) rms_uv=0		!! Conditionally averaged rms field 
+ARRAY(-box_length..box_length,-box_width..box_width,0..box_heigth,0..dn-1) OF STRUCTURE(REAL Q1,Q2,Q3,Q4) rmsavg_uv=0	!! rms field of the conditionally averaged velocity field
+ARRAY(-box_length..box_length,-box_width..box_width,0..box_heigth,0..dn-1) OF STRUCTURE(REAL u,v,w) omegaavg=0          !! Conditionally averaged streamwise vorticity 
+ARRAY(-box_length..box_length,-box_width..box_width,0..box_heigth,0..dn-1) OF REAL pavg=0		                !! Conditionally averaged pressure field 
+ARRAY(-box_length..box_length,-box_width..box_width,0..box_heigth,0..dn-1) OF REAL pstrain=0				!! Conditionally averaged pressure strain field
+ARRAY(0..box_heigth,0..dn-1) OF INTEGER educed_at_heigth=0								!! Number of vortices educed at a certain heigth 
+BOOLEAN continue, gofwd, hit_another_structure                                                                          !! Booleans for checking structure eduction and a posteriori validity
+POINTER TO STORED STRUCTURE(
+   ARRAY(0..dn-1,0..box_heigth,-box_length..box_length,-box_width..box_width) OF REAL lambdaimage
+   ARRAY(0..dn-1,0..box_heigth,-box_length..box_length,-box_width..box_width) OF STRUCTURE(REAL u,v,w) Vavgimage
+   ARRAY(0..dn-1,0..box_heigth,-box_length..box_length,-box_width..box_width) OF STRUCTURE(REAL Q2 Q4) rmsimage
+   ARRAY(0..dn-1,0..box_heigth,-box_length..box_length,-box_width..box_width) OF STRUCTURE(REAL Q1,Q2,Q3,Q4) rmsavgimage
+   ARRAY(0..dn-1,0..box_heigth,-box_length..box_length,-box_width..box_width) OF STRUCTURE(REAL u,v,w) omegaavgimage
+   ARRAY(0..dn-1,0..box_heigth,-box_length..box_length,-box_width..box_width) OF REAL pavgimage
+   ARRAY(0..dn-1,0..box_heigth,-box_length..box_length,-box_width..box_width) OF REAL pstrainimage )condfield
+outfile = CREATE("educed.dat")
+outfile2 = CREATE("educed_coord.dat")
+
+LOOP mean FOR n=nfmin TO nfmax
+  fieldname = 'Field'n'.fld';
+  diskfield = OPEN(fieldname);
+  WITH diskfield:
+  V(0,0,*).u.REAL=uavimage(miny..maxy)
+  V(0,0,*).w.REAL=wavimage(miny..maxy)
+  CLOSE diskfield
+  LOOP FOR iy=0 TO ny DIV 2
+    WITH meanvel(iy):
+    u=~+1/2*[V(0,0,iy).u.REAL + V(0,0,ny-iy).u.REAL]
+    w=~+1/2*[V(0,0,iy).w.REAL + V(0,0,ny-iy).w.REAL]
+    WITH phasevel(iy,(n-nfmin) MOD dn):
+    u=~+1/2*[V(0,0,iy).u.REAL + V(0,0,ny-iy).u.REAL]
+    w=~+1/2*[V(0,0,iy).w.REAL + V(0,0,ny-iy).w.REAL]
+  REPEAT LOOP    
+REPEAT mean
+DO WITH meanvel(iy): u=~/nftot; w=~/nftot FOR iy=0 TO ny DIV 2
+DO WITH phasevel(iy,i): u=~/(nftot DIV dn)-meanvel(iy).u; w=~/(nftot DIV dn)-meanvel(iy).w FOR iy = 0 TO ny DIV 2 AND ALL i
+
+LOOP files FOR n=nfmin TO nfmax
+
+  fieldname = WRITE('Field'n'.fld');
+  WRITE fieldname
+  diskfield = OPEN(fieldname);
+  WITH diskfield:
+    V(0,0,*).u.REAL=uavimage(miny..maxy)
+    LOOP FOR iy = miny TO maxy
+      fieldbuf=fieldimage(iy)
+      DO V(ix,iz,iy).v=fieldbuf(ix,iz).v; V(ix,iz,iy).u=fieldbuf(ix,iz).eta FOR ALL ix,iz EXCEPT ix=0 AND iz=0
+    REPEAT LOOP
+    vetaTOuvw
+    V(0,0,*).w.REAL=wavimage(miny..maxy);
+ 
+  LOOP FOR iy=0 TO ny DIV 2 WITH rms(iy):
+    uv=~+1/2*{2*[SUM (V(ix,*,iy).u | V(ix,*,iy).v).REAL FOR ix=1 TO nx]+ [-2*[SUM (V(ix,*,ny-iy).u | V(ix,*,ny-iy).v).REAL FOR ix=1 TO nx]]}
+    uv=~+1/2*{[V(0,*,iy).u | V(0,*,iy).v].REAL + (-1)*[V(0,*,ny-iy).u | V(0,*,ny-iy).v].REAL}  
+  REPEAT LOOP    
+  CLOSE diskfield
+  !! <<========================================================
+  
+  V(0,0,miny..maxy)=0  !Solo fluttuazioni rispetto alla media spaziale
+  PARALLEL LOOP FOR ismp=0 TO nsmp-1
+    DO WITH V(ix,iz,*), gradV(ix,iz,*):
+      ux=I*ix*alfa0*u; vx=I*ix*alfa0*v; wx=I*ix*alfa0*w
+      uz=I*iz*beta0*u; vz=I*iz*beta0*v; wz=I*iz*beta0*w
+      deriv(u.REAL,uy.REAL); deriv(u.IMAG,uy.IMAG)
+      deriv(v.REAL,vy.REAL); deriv(v.IMAG,vy.IMAG)
+      deriv(w.REAL,wy.REAL); deriv(w.IMAG,wy.IMAG)
+    FOR ix=ismp*(nx+1) DIV nsmp TO (ismp+1)*(nx+1) DIV nsmp -1 AND ALL iz 
+  SYNC(ismp,nsmp)
+
+  LOOP FOR iy=0 TO ny
+      LOOP FOR ix=ismp*(nx+1) DIV nsmp TO (ismp+1)*(nx+1) DIV nsmp -1
+        Vd(ix,0..nz)=V(ix,0..nz,iy)
+        Vd(ix,nz+1..nzd-nz-1)=0
+        Vd(ix,nzd+(-nz..-1))=V(ix,-nz..-1,iy)
+        WITH Vd(ix,*): IFT(u); IFT(v); IFT(w);
+      REPEAT
+      IF ismp=0 THEN Vd(nx+1..nxd-1)=0
+      SYNC(ismp,nsmp)
+      DO WITH Vd(*,iz): RFT(u); RFT(v); RFT(w); 
+      FOR iz=ismp*(nzd) DIV nsmp TO (ismp+1)*(nzd) DIV nsmp -1
+      SYNC(ismp,nsmp)
+      IF ismp=0 THEN
+        LOOP average_RSS_quadrants FOR ix=0 TO 2*nxd-1 AND iz=0 TO nzd-1
+	  IF iy <= ny DIV 2 THEN WITH uv_quad(iy):
+	    tmpr=Vd(*,iz).u.REALIFIED(ix)*Vd(*,iz).v.REALIFIED(ix)/(4*nxd*nzd)
+            IF Vd(*,iz).u.REALIFIED(ix)<0  THEN 
+              IF Vd(*,iz).v.REALIFIED(ix)<0 THEN Q3=~+tmpr ELSE Q2=~+tmpr END IF 
+            ELSE
+              IF Vd(*,iz).v.REALIFIED(ix)<0 THEN Q4=~+tmpr ELSE Q1=~+tmpr END IF 
+            END IF
+	  ELSE IF iy >= ny DIV 2 THEN WITH uv_quad(ny-iy)
+	    tmpr=-Vd(*,iz).u.REALIFIED(ix)*Vd(*,iz).v.REALIFIED(ix)/(4*nxd*nzd)
+            IF Vd(*,iz).u.REALIFIED(ix)<0 THEN 
+              IF -Vd(*,iz).v.REALIFIED(ix)<0 THEN Q3=~+tmpr ELSE Q2=~+tmpr END IF
+            ELSE 
+              IF -Vd(*,iz).v.REALIFIED(ix)<0 THEN Q4=~+tmpr ELSE Q1=~+tmpr END IF 
+            END IF
+	  END IF
+	REPEAT average_RSS_quadrants
+      END IF
+      
+      INTEGER iyl,iyh
+      IF iy=0 THEN iyl=iy-1; iyh=iy; ELSE IF iy=ny THEN iyl=iy; iyh=ny+1; ELSE iyl=iy; iyh=iy
+      LOOP FOR i=iyl TO iyh
+        LOOP FOR ix=ismp*(nx+1) DIV nsmp TO (ismp+1)*(nx+1) DIV nsmp -1
+          gradVd(ix,0..nz)=gradV(ix,0..nz,i)
+          gradVd(ix,nz+1..nzd-nz-1)=0
+          gradVd(ix,nzd+(-nz..-1))=gradV(ix,-nz..-1,i)
+          WITH gradVd(ix,*): IFT(ux); IFT(vx); IFT(wx); IFT(uy); IFT(vy); IFT(wy); IFT(uz); IFT(vz); IFT(wz) 
+        REPEAT
+        IF ismp=0 THEN gradVd(nx+1..nxd-1)=0
+        SYNC(ismp,nsmp)
+        DO 
+           WITH gradVd(*,iz): RFT(ux); RFT(vx); RFT(wx); RFT(uy); RFT(vy); RFT(wy); RFT(uz); RFT(vz); RFT(wz) 
+           DO WITH gradVd(ix,iz):
+             hpd(ix,iz).REAL = 2*(ux.REAL*vy.REAL+vy.REAL*wz.REAL+ux.REAL*wz.REAL-vx.REAL*uy.REAL-wx.REAL*uz.REAL-wy.REAL*vz.REAL)
+             hpd(ix,iz).IMAG = 2*(ux.IMAG*vy.IMAG+vy.IMAG*wz.IMAG+ux.IMAG*wz.IMAG-vx.IMAG*uy.IMAG-wx.IMAG*uz.IMAG-wy.IMAG*vz.IMAG)
+           FOR ALL ix
+           HFT(hpd(*,iz))
+        FOR iz=ismp*(nzd) DIV nsmp TO (ismp+1)*(nzd) DIV nsmp -1
+	SYNC(ismp,nsmp)
+	DO FFT(hpd(ix,*)); hp(ix,0..nz,i) = hpd(ix,0..nz); hp(ix,-nz..-1,i) = hpd(ix,nzd+(-nz..-1)); FOR ix=ismp*(nx+1) DIV nsmp TO (ismp+1)*(nx+1) DIV nsmp -1
+      REPEAT 
+	
+    DO WITH gradVd(*,iz):
+      LOOP FOR ix=0 TO 2*nxd-1
+	aa= 	( ux.REALIFIED(ix)*ux.REALIFIED(ix) + ux.REALIFIED(ix)*ux.REALIFIED(ix) + 
+		  uy.REALIFIED(ix)*vx.REALIFIED(ix) + vx.REALIFIED(ix)*uy.REALIFIED(ix) +
+		  uz.REALIFIED(ix)*wx.REALIFIED(ix) + wx.REALIFIED(ix)*uz.REALIFIED(ix) )/2
+	bb= 	( vx.REALIFIED(ix)*uy.REALIFIED(ix) + uy.REALIFIED(ix)*vx.REALIFIED(ix) +
+		  vy.REALIFIED(ix)*vy.REALIFIED(ix) + vy.REALIFIED(ix)*vy.REALIFIED(ix) + 
+		  vz.REALIFIED(ix)*wy.REALIFIED(ix) + wy.REALIFIED(ix)*vz.REALIFIED(ix) )/2
+	cc= 	( wx.REALIFIED(ix)*uz.REALIFIED(ix) + uz.REALIFIED(ix)*wx.REALIFIED(ix) +
+		  wy.REALIFIED(ix)*vz.REALIFIED(ix) + vz.REALIFIED(ix)*wy.REALIFIED(ix) +
+		  wz.REALIFIED(ix)*wz.REALIFIED(ix) + wz.REALIFIED(ix)*wz.REALIFIED(ix) )/2
+	dd=     ( ux.REALIFIED(ix)*uy.REALIFIED(ix) + ux.REALIFIED(ix)*vx.REALIFIED(ix) +
+		  uy.REALIFIED(ix)*vy.REALIFIED(ix) + vx.REALIFIED(ix)*vy.REALIFIED(ix) +
+		  uz.REALIFIED(ix)*wy.REALIFIED(ix) + wx.REALIFIED(ix)*vz.REALIFIED(ix) )/2
+	ee= 	( ux.REALIFIED(ix)*uz.REALIFIED(ix) + ux.REALIFIED(ix)*wx.REALIFIED(ix) +
+		  uy.REALIFIED(ix)*vz.REALIFIED(ix) + vx.REALIFIED(ix)*wy.REALIFIED(ix) +
+		  uz.REALIFIED(ix)*wz.REALIFIED(ix) + wx.REALIFIED(ix)*wz.REALIFIED(ix) )/2
+	ff= 	( vx.REALIFIED(ix)*uz.REALIFIED(ix) + uy.REALIFIED(ix)*wx.REALIFIED(ix) +
+		  vy.REALIFIED(ix)*vz.REALIFIED(ix) + vy.REALIFIED(ix)*wy.REALIFIED(ix) +
+		  vz.REALIFIED(ix)*wz.REALIFIED(ix) + wy.REALIFIED(ix)*wz.REALIFIED(ix) )/2
+	trace = aa+bb+cc
+	AA=1; BB=-aa-bb-cc; CC=aa*bb+aa*cc+bb*cc-dd^2-ee^2-ff^2; DD=-aa*bb*cc+cc*dd^2+bb*ee^2-2*dd*ee*ff+aa*ff^2
+
+	!radici del polinomio caratteristico
+	Par1= -2*BB^3 + 9*BB*CC - 27*DD; Par2= (-BB^2*CC^2 + 4*CC^3 + 4*BB^3*DD - 18*BB*CC*DD + 27*DD^2)
+	Par2= 3^(3/2)*(Par2)^(1/2);      Par3= (-BB^2 + 3*CC)/(3*2^(2/3)*(Par1 + Par2)^(1/3))
+	lam1= -BB/3 - 2^(1/3)*(-BB^2 + 3*CC)/(3*(Par1 + Par2)^(1/3)) + (1/(3*2^(1/3)))*((Par1 + Par2)^(1/3))
+	lam2= -BB/3 + (1 + I*3^(1/2))*Par3 - (1/(6*2^(1/3)))*(1 - I*3^(1/2))*(Par1 + Par2)^(1/3)
+	lam3= trace - lam2 -lam1
+
+        omegax(ix,iz,iy)=(gradVd(*,iz).wy.REALIFIED(ix)-gradVd(*,iz).vz.REALIFIED(ix))/Retau
+	lambda2(ix,iz,iy)=REAL(lam1)/Retau^2
+	IF REAL(lam1)=MIN(REAL(lam1),REAL(lam2),REAL(lam3)) THEN lambda2(ix,iz,iy) = MIN(REAL(lam2),REAL(lam3))/Retau^2
+	IF REAL(lam1)=MAX(REAL(lam1),REAL(lam2),REAL(lam3)) THEN lambda2(ix,iz,iy) = MAX(REAL(lam2),REAL(lam3))/Retau^2
+      REPEAT
+    FOR iz=ismp*(HI+1) DIV nsmp TO (ismp+1)*(HI+1) DIV nsmp -1
+   SYNC(ismp,nsmp)
+  REPEAT
+  
+  IF ismp=0 THEN dpdy_down=0; DO dpdy_down = ~ + ni*d240(id)*V(0,0,id+1).v FOR id=-2 TO 2; solve_neumann(hp(0,0,*), dpdy_down, 0, pres(0,0,*))
+  LOOP FOR ix=ismp*(nx+1) DIV nsmp TO (ismp+1)*(nx+1) DIV nsmp -1 AND iz=-nz TO nz EXCEPT ix=0 AND iz=0
+	alfa = alfa0*ix; beta = beta0*iz; k2 = alfa^2 + beta^2
+	pres_up = calcpn(ix,iz); pres_down = calcp0(ix,iz)
+	solve_dirichelet(hp(ix,iz,*), pres_up, pres_down, k2, pres(ix,iz,*))
+  REPEAT 
+  REPEAT LOOP
+
+  !! Detecting QSV: CONDITIONAL AVERAGE
+  !! >>>>======================================================================================================================================= 
+  LOOP whichwall FOR wall = -1 TO 1 BY 2
+
+  REAL vorticity; INTEGER vort_sign
+  INLINE FUNCTION ybound(INTEGER i)=IF wall < 0 THEN i ELSE ny-i
+  INLINE FUNCTION phase(INTEGER i)=IF vort_sign>0 THEN i ELSE [(dn DIV 2)+i] MOD dn
+  count=0; xp=0; IF wall = -1 THEN search_iymin=1; search_iymax=iymax; ELSE search_iymin=ny-iymax; search_iymax=ny; END IF
+    
+  LOOP educe WHILE xp < 2*nxd-1
+  
+     lambda2min=100000
+     LOOP minimum FOR iz=0 TO nzd-1 AND iy = search_iymin TO search_iymax 											
+     IF lambda2(xp,iz,iy)<lambda2min THEN lambda2min=lambda2(xp,iz,iy); izmin=iz; iymin=iy
+     REPEAT minimum
+	
+     IF lambda2min < lambda2th THEN
+	
+        vortex_cores(0,1) = iymin; vortex_cores(0,2) = izmin;
+	continue=YES; gofwd=YES
+	xp2 = xp; hit_another_structure=NO
+
+	LOOP search
+	    IF gofwd THEN INC xp2 ELSE DEC xp2
+	    ixp = xbound(xp2); lambda2min = 100000
+	    search_heigth = iymin; DO search_heigth=~-wall WHILE ABS(y(search_heigth)-y(iymin))<=resx*TAN(search_heigth_angle*PI/180); search_heigth = -(~-iymin)*wall
+            
+            lb=izmin-search_width; rb=izmin+search_width; lowb=MAX(iymin-search_heigth,search_iymin); topb=MIN(iymin+search_heigth, search_iymax);
+	    LOOP minimumfwd FOR iz=lb TO rb AND iy = lowb TO topb
+	      tmpr=lambda2(ixp,zbound(iz),iy); IF tmpr<lambda2min THEN lambda2min=tmpr; izmin=iz; iymin=iy; ELSE IF tmpr=100000 THEN hit_another_structure=NO; !Write YES to avoid multiple identification
+	    REPEAT minimumfwd
+            IF lambda2min < lambda2th AND iymin<topb AND iymin>lowb AND izmin>lb AND izmin<rb THEN
+              vortex_cores(xp2-xp,1)=iymin; vortex_cores(xp2-xp,2)=izmin 
+	    ELSE
+              IF NOT gofwd THEN continue=NO; lxbwd=xp2+1;
+              IF gofwd THEN gofwd=NO; continue=YES; lxfwd=xp2-1; xp2=xp; iymin=vortex_cores(0,1); izmin=vortex_cores(0,2)
+            END IF
+            IF iymin=topb AND iymin=lowb AND izmin=lb AND izmin=rb THEN hit_another_structure=YES; WRITE "A structure has been refused because the maximum of lambda2 was on the allowed boundary"
+	REPEAT search WHILE continue
+
+        midx=ROUND[(lxfwd+lxbwd)/2];   midz=vortex_cores(midx-xp,2);   midy=ybound(vortex_cores(midx-xp,1)); vortex_length=0;
+	IF lxfwd>lxbwd THEN DO vortex_length=~+SQRT[resx^2+resz^2*(vortex_cores(i+1-xp,2)-vortex_cores(i-xp,2))^2 + (y(vortex_cores(i+1-xp,1))-y(vortex_cores(i-xp,1)))^2] FOR i=lxbwd TO lxfwd-1 ELSE vortex_length=0
+	IF vortex_length*Retau > qsv_min_length AND NOT hit_another_structure THEN   
+            vorticity=-omegax(xbound(midx),zbound(vortex_cores(midx-xp,2)),vortex_cores(midx-xp,1))*wall
+            vort_sign=IF vorticity>0 THEN 1 ELSE -1;
+            xmean=0.5*Retau*resx*(lxfwd+lxbwd); zmean=Retau*resz*[SUM vortex_cores(i-xp,2)   FOR i=lxbwd TO lxfwd]/(lxfwd-lxbwd+1); 
+            REAL ymean=0.0; DO ymean=~+Retau*y(vortex_cores(i-xp,1))/(lxfwd-lxbwd+1)  FOR i=lxbwd TO lxfwd
+            azimut=0;    tmpr=0; DO azimut=~+(Retau*resx*i-xmean)*(Retau*resz*vortex_cores(i-xp,2)-zmean);  tmpr=~+[(Retau*resx*i-xmean)^2]  FOR i=lxbwd TO lxfwd; azimut=vort_sign*ATAN(~/tmpr)*180/PI
+	    elevation=0; tmpr=0; DO elevation=~+(Retau*resx*i-xmean)*[Retau*y(vortex_cores(i-xp,1))-ymean]; tmpr=~+[(Retau*resx*i-xmean)^2]  FOR i=lxbwd TO lxfwd; elevation=-wall*ATAN(~/tmpr)*180/PI
+
+	    IF elevation>0 AND ABS(azimut-phi0)<max_tilt_angle AND Retau*y(midy)<max_vortex_heigth AND Retau*y(midy)>min_vortex_heigth THEN 
+              WRITE "Educed structure of length " vortex_length*Retau ",  azmiut " azimut, " elevation " elevation, "vorticity ", vort_sign, "  on wall " wall " and phase " 2*(phase((n-1) MOD dn))"/"dn" pi"
+	      WRITE TO outfile y(midy)*Retau, vortex_length*Retau, azimut, elevation, 2*(phase((n-1) MOD dn))/dn
+              DO WRITE TO outfile2 Retau*i*resx, Retau*resz*vortex_cores(i-xp,2), Retau*y(ybound(vortex_cores(i-xp,1))), vort_sign, 2*(phase((n-1) MOD dn))/dn FOR i=lxbwd TO lxfwd
+              INC count; INC educed(phase((n-1) MOD dn)); INC educed_at_heigth(midy,phase((n-1) MOD dn))
+              vortex_centers(count,1)=midx; vortex_centers(count,2)=midz; vortex_centers(count,3)=vort_sign;
+       
+            END IF
+
+	END IF
+
+        LOOP remove_the_educed_vortex FOR ix=lxbwd TO lxfwd
+         INTEGER lowb=0; DO DEC lowb WHILE lambda2(xbound(ix),zbound(vortex_cores(ix-xp,2)),vortex_cores(ix-xp,1)+lowb)<=lambda2th AND vortex_cores(ix-xp,1)+lowb>=0
+         INTEGER topb=0; DO INC topb WHILE lambda2(xbound(ix),zbound(vortex_cores(ix-xp,2)),vortex_cores(ix-xp,1)+topb)<=lambda2th AND vortex_cores(ix-xp,1)+topb<=ny
+         LOOP FOR iy=lowb TO topb
+	   INTEGER lb=0; DO DEC lb WHILE lambda2(xbound(ix),zbound(vortex_cores(ix-xp,2)+lb),vortex_cores(ix-xp,1)+iy)<=lambda2th AND ABS(lb)<=nzd
+           INTEGER rb=0; DO INC rb WHILE lambda2(xbound(ix),zbound(vortex_cores(ix-xp,2)+rb),vortex_cores(ix-xp,1)+iy)<=lambda2th AND ABS(rb)<=nzd
+           DO lambda2(xbound(ix),zbound(vortex_cores(ix-xp,2)+iz),vortex_cores(ix-xp,1)+iy)=100000 FOR iz=lb TO rb
+         REPEAT
+        REPEAT remove_the_educed_vortex
+
+     ELSE 
+
+	  INC xp;
+
+     END IF	
+  REPEAT educe
+  
+  IF count>0 THEN
+  LOOP average FOR iy=0 TO box_heigth
+     Vd=0; gradVd=0; pd=0;
+     PARALLEL LOOP FOR ismp=0 TO nsmp-1
+        LOOP FOR ix=ismp*(nx+1) DIV nsmp TO (ismp+1)*(nx+1) DIV nsmp -1
+           Vd(ix,0..nz)=V(ix,0..nz,ybound(iy))
+	   Vd(ix,nzd+(-nz..-1))=V(ix,-nz..-1,ybound(iy))
+           gradVd(ix,0..nz)=gradV(ix,0..nz,ybound(iy))
+           gradVd(ix,nzd+(-nz..-1))=gradV(ix,-nz..-1,ybound(iy))
+           WITH gradVd(ix,*), Vd(ix,*): IFT(ux); IFT(vx); IFT(wx); IFT(uy); IFT(uz); IFT(u); IFT(v); IFT(w);	
+              pd(ix,0..nz)=pres(ix,0..nz,ybound(iy)) 
+	      pd(ix,nzd+(-nz..-1))=pres(ix,-nz..-1,ybound(iy))
+              IFT(pd(ix,*))		
+        REPEAT
+        SYNC(ismp,nsmp)
+	DO  
+           RFT(pd(*,iz)); 
+           WITH gradVd(*,iz), Vd(*,iz): RFT(ux); RFT(vx); RFT(wx); RFT(uy); RFT(uz); RFT(u); RFT(v); RFT(w) 
+        FOR iz=ismp*(nzd) DIV nsmp TO (ismp+1)*(nzd) DIV nsmp -1
+     REPEAT
+	   
+     LOOP all_found_vortices FOR ev=1 TO count
+       LOOP FOR ix=-box_length TO box_length AND iz=-box_width TO box_width
+          vort_sign=vortex_centers(ev,3); ixp=xbound(vortex_centers(ev,1)+ix); izp=zbound(vortex_centers(ev,2)+iz*vort_sign)
+          pavg(ix, iz, iy,phase((n-1) MOD dn)) = ~ + pd(*, izp).REALIFIED(ixp)
+          WITH Vavg(ix,iz,iy,phase((n-1) MOD dn)):u=~+Vd(*,izp).u.REALIFIED(ixp); v=~-wall*Vd(*,izp).v.REALIFIED(ixp); w=~+vort_sign*Vd(*,izp).w.REALIFIED(ixp)	  
+          WITH rms_uv(ix,iz,iy,phase((n-1) MOD dn)): 
+	                                              tmpr = -wall*Vd(*,izp).u.REALIFIED(ixp)*Vd(*,izp).v.REALIFIED(ixp)
+                                                      IF tmpr<0 THEN IF Vd(*,izp).u.REALIFIED(ixp)<0 THEN Q2=~-tmpr ELSE Q4=~-tmpr END IF; END IF
+	  WITH omegaavg(ix,iz,iy,phase((n-1) MOD dn)): 
+	                                              u=~-wall*vort_sign*omegax(ixp,izp,ybound(iy))
+                                                      v=~+vort_sign*[gradVd(*,izp).uz.REALIFIED(ixp)-gradVd(*,izp).wx.REALIFIED(ixp)]/Retau
+                                                      w=~-wall*[gradVd(*,izp).vx.REALIFIED(ixp)-gradVd(*,izp).uy.REALIFIED(ixp)]/Retau
+       REPEAT
+     REPEAT all_found_vortices
+  REPEAT average
+  END IF
+  
+  REPEAT whichwall
+
+  !! <<<<<<==================================================================================================================================================
+  
+REPEAT files
+CLOSE outfile
+CLOSE outfile2
+
+outfile = CREATE("mean.dat")
+DO WITH meanvel(iy): WRITE TO outfile y(iy)*Retau, u, w FOR iy = 0 TO ny DIV 2
+CLOSE outfile
+
+outfile = CREATE("phasemean.dat")
+DO WITH phasevel(iy,*): WRITE TO outfile y(iy)*Retau, u, w FOR iy = 0 TO ny DIV 2
+CLOSE outfile
+
+outfile = CREATE("rms.dat")
+DO WITH rms(iy),uv_quad(iy): WRITE TO outfile y(iy)*Retau, uv/nftot, Q1/nftot, Q2/nftot, Q3/nftot, Q4/nftot FOR iy = 0 TO ny DIV 2
+CLOSE outfile
+
+FILE mcenters
+condfield= CREATE("conditional_average.fld")
+FILE out3= CREATE("mean_vortex.dat")
+LOOP eachphase FOR n = 1 TO dn
+
+  REAL Q1int=0, Q2int=0, Q3int, Q4int=0, vortex_density, pstrainint=0
+  LOOP FOR ALL ix,iy,iz WITH Vavg(ix,iz,iy,n-1),rms_uv(ix,iz,iy,n-1):
+     u=~/educed(n-1); v=~/educed(n-1); w=~/educed(n-1); Q2=~/educed(n-1); Q4=~/educed(n-1);
+     WITH omegaavg(ix,iz,iy,n-1): u=~/educed(n-1); v=~/educed(n-1); w=~/educed(n-1)
+     pavg(ix,iz,iy,n-1)=~/educed(n-1);
+  REPEAT LOOP
+  
+  LOOP FOR iy=0 TO box_heigth
+  dyp1=y(iy+1)-y(iy); dym1=y(iy-1)-y(iy); a=-dyp1/dym1/(dym1-dyp1); c=dym1/dyp1/(dym1-dyp1) ! Second order "centered" finite differences uneven grid
+    DO 
+     LOOP FOR ix=-box_length TO box_length
+	WITH gradVdavg(ix,iz)
+	    WITH Vavg(*,iz,iy,n-1):
+        ux=IF ix=-box_length THEN (u(ix+1)-u(ix))/resx ELSE IF ix=box_length THEN (u(ix)-u(ix-1))/resx ELSE (u(ix+1)-u(ix-1))/(2*resx)
+        vx=IF ix=-box_length THEN (v(ix+1)-v(ix))/resx ELSE IF ix=box_length THEN (v(ix)-v(ix-1))/resx ELSE (v(ix+1)-v(ix-1))/(2*resx)
+        wx=IF ix=-box_length THEN (w(ix+1)-w(ix))/resx ELSE IF ix=box_length THEN (w(ix)-w(ix-1))/resx ELSE (w(ix+1)-w(ix-1))/(2*resx)
+            WITH Vavg(ix,iz,*,n-1):
+        uy=IF iy=0 THEN (u(iy+1)-u(iy))/(y(1)-y(0)) ELSE IF iy=box_heigth THEN (u(iy)-u(iy-1))/(y(iy)-y(iy-1)) ELSE a*u(iy-1)+c*u(iy+1)
+        vy=IF iy=0 THEN (v(iy+1)-v(iy))/(y(1)-y(0)) ELSE IF iy=box_heigth THEN (v(iy)-v(iy-1))/(y(iy)-y(iy-1)) ELSE a*v(iy-1)+c*v(iy+1)
+        wy=IF iy=0 THEN (w(iy+1)-w(iy))/(y(1)-y(0)) ELSE IF iy=box_heigth THEN (w(iy)-w(iy-1))/(y(iy)-y(iy-1)) ELSE a*w(iy-1)+c*w(iy+1)
+	    WITH Vavg(ix,*,iy,n-1):
+        uz=IF iz=-box_width THEN (u(iz+1)-u(iz))/resz ELSE IF iz=box_width THEN (u(iz)-u(iz-1))/resz ELSE (u(iz+1)-u(iz-1))/(2*resz)
+        vz=IF iz=-box_width THEN (v(iz+1)-v(iz))/resz ELSE IF iz=box_width THEN (v(iz)-v(iz-1))/resz ELSE (v(iz+1)-v(iz-1))/(2*resz)
+        wz=IF iz=-box_width THEN (w(iz+1)-w(iz))/resz ELSE IF iz=box_width THEN (w(iz)-w(iz-1))/resz ELSE (w(iz+1)-w(iz-1))/(2*resz)
+	aa= 	( ux*ux + ux*ux + uy*vx + vx*uy + uz*wx + wx*uz )/2; bb= 	( vx*uy + uy*vx + vy*vy + vy*vy + vz*wy + wy*vz )/2
+	cc= 	( wx*uz + uz*wx + wy*vz + vz*wy + wz*wz + wz*wz )/2; dd=       ( ux*uy + ux*vx + uy*vy + vx*vy + uz*wy + wx*vz )/2
+	ee= 	( ux*uz + ux*wx + uy*vz + vx*wy + uz*wz + wx*wz )/2; ff= 	( vx*uz + uy*wx + vy*vz + vy*wy + vz*wz + wy*wz )/2
+	trace = aa+bb+cc; AA=1; BB=-aa-bb-cc; CC=aa*bb+aa*cc+bb*cc-dd^2-ee^2-ff^2; DD=-aa*bb*cc+cc*dd^2+bb*ee^2-2*dd*ee*ff+aa*ff^2
+
+	Par1= -2*BB^3 + 9*BB*CC - 27*DD; Par2= (-BB^2*CC^2 + 4*CC^3 + 4*BB^3*DD - 18*BB*CC*DD + 27*DD^2); Par2= 3^(3/2)*(Par2)^(1/2); Par3= (-BB^2 + 3*CC)/(3*2^(2/3)*(Par1 + Par2)^(1/3))
+	lam1= -BB/3 - 2^(1/3)*(-BB^2 + 3*CC)/(3*(Par1 + Par2)^(1/3)) + (1/(3*2^(1/3)))*((Par1 + Par2)^(1/3))
+	lam2= -BB/3 + (1 + I*3^(1/2))*Par3 - (1/(6*2^(1/3)))*(1 - I*3^(1/2))*(Par1 + Par2)^(1/3)
+	lam3= trace - lam2 -lam1
+
+	lambdaavg(ix,iz,iy,n-1)=REAL(lam1)/Retau^2
+	IF REAL(lam1)=MIN(REAL(lam1),REAL(lam2),REAL(lam3)) THEN lambdaavg(ix,iz,iy,n-1) = MIN(REAL(lam2),REAL(lam3))/Retau^2
+	IF REAL(lam1)=MAX(REAL(lam1),REAL(lam2),REAL(lam3)) THEN lambdaavg(ix,iz,iy,n-1) = MAX(REAL(lam2),REAL(lam3))/Retau^2
+        WITH gradVdavg(ix,iz): pstrain(ix,iz,iy,n-1)=pavg(ix,iz,iy,n-1)*ux/Retau
+
+      REPEAT
+    FOR iz=-box_width TO box_width
+  REPEAT
+  
+  DO WITH rmsavg_uv(ix,iz,iy,n-1), Vavg(ix,iz,iy,n-1):
+    IF u>0 THEN 
+	  IF v>0 THEN Q1=~+u*v*(1-y(iy)) ELSE Q4=~+u*v*(1-y(iy)) END IF
+	ELSE 
+	  IF v>0 THEN Q2=~+u*v*(1-y(iy)) ELSE Q3=~+u*v*(1-y(iy)) END IF
+	END IF
+  FOR ALL ix,iz AND iy=0 TO box_heigth
+
+  #ifdef writefld
+  LOOP FOR iy=0 TO box_heigth WITH condfield
+     lambdaimage(n-1,iy,*,*)=lambdaavg(*,*,iy,n-1)
+     Vavgimage(n-1,iy,*,*)=Vavg(*,*,iy,n-1)
+     rmsimage(n-1,iy,*,*)=rms_uv(*,*,iy,n-1)
+     rmsavgimage(n-1,iy,*,*)=rmsavg_uv(*,*,iy,n-1)
+     omegaavgimage(n-1,iy,*,*)=omegaavg(*,*,iy,n-1)
+     pavgimage(n-1,iy,*,*)=pavg(*,*,iy,n-1)
+     pstrainimage(n-1,iy,*,*)=pstrain(*,*,iy,n-1)
+
+  REPEAT LOOP 
+  #endif
+  
+  ! Integral of Q2 and Q4 and pressure_strain in the averaged field
+  vortex_density=0.5*educed(n-1)/(resx*2*box_length*resz*2*box_width*(nftot DIV dn))
+  WITH rmsavg_uv(*,*,*,n-1): dVintegral(Q1int,Q1); dVintegral(Q2int,Q2); dVintegral(Q3int,Q3); dVintegral(Q4int,Q4)
+  dVintegral(pstrainint,pstrain(*,*,*,n-1))
+ 
+
+  ! Mean vortex tilt angle, elevation and mean heigth
+  ARRAY(-nxd..nxd, 1..2) OF REAL mvortex_cores=0
+  !Search vortex center with the centroid strategy
+  xp2=-1; gofwd=YES; continue=YES; LOOP search_averaged_mvortex          
+	    IF gofwd THEN INC xp2 ELSE DEC xp2
+	    lambda2min = 100000 
+            LOOP FOR iz=-box_width TO box_width AND iy = 0 TO box_heigth
+	      IF lambdaavg(xp2,iz,iy,n-1)<lambda2min THEN lambda2min=lambdaavg(xp2,iz,iy,n-1); izmin=iz; iymin=iy
+	    REPEAT
+	    INTEGER topb=iymin; INTEGER lowb=iymin; INTEGER lb=izmin; INTEGER rb=izmin;
+            IF lambda2min < lambda2th_meanvortex AND ABS(xp2)<box_length THEN
+              LOOP WHILE lambdaavg(xp2,izmin,topb+1,n-1)<=lambda2th_meanvortex; INC topb; REPEAT
+              LOOP WHILE lambdaavg(xp2,izmin,lowb-1,n-1)<=lambda2th_meanvortex; DEC lowb; REPEAT
+              LOOP WHILE lambdaavg(xp2,lb-1 ,iymin ,n-1)<=lambda2th_meanvortex; DEC lb;   REPEAT
+              LOOP WHILE lambdaavg(xp2,rb+1 ,iymin ,n-1)<=lambda2th_meanvortex; INC rb;   REPEAT              
+              mvortex_cores(xp2,1)=0.5*(y(topb)+y(lowb)); mvortex_cores(xp2,2)=0.5*(lb+rb) 
+            END IF 
+           
+            IF rb-lb<1 OR topb-lowb<1 THEN
+              IF NOT gofwd THEN continue=NO; lxbwd=xp2+1
+              IF gofwd THEN gofwd=NO; continue=YES; lxfwd=xp2-1; xp2=0;
+            END IF
+  REPEAT search_averaged_mvortex WHILE continue
+  vortex_length=0; DO vortex_length=~+SQRT[resx^2+resz^2*(mvortex_cores(i+1,2)-mvortex_cores(i,2))^2 + (mvortex_cores(i+1,1)-mvortex_cores(i,1))^2] FOR i=lxbwd TO lxfwd-1
+  midx=ROUND[(lxfwd+lxbwd)/2]; midy=Retau*mvortex_cores(midx,1)
+  xmean=0.5*Retau*resx*(lxfwd+lxbwd); zmean=Retau*resz*[SUM mvortex_cores(i,2)   FOR i=lxbwd TO lxfwd]/(lxfwd-lxbwd+1); 
+  REAL ymean=0.0; DO ymean=~+Retau*mvortex_cores(i,1)/(lxfwd-lxbwd+1)  FOR i=lxbwd TO lxfwd
+  azimut=0; tmpr=0;    DO azimut=~+(Retau*resx*i-xmean)*(Retau*resz*mvortex_cores(i,2)-zmean);  tmpr=~+[(Retau*resx*i-xmean)^2]  FOR i=lxbwd TO lxfwd; azimut=ATAN(~/tmpr)*180/PI
+  elevation=0; tmpr=0; DO elevation=~+(Retau*resx*i-xmean)*[Retau*mvortex_cores(i,1)-ymean];    tmpr=~+[(Retau*resx*i-xmean)^2]  FOR i=lxbwd TO lxfwd; elevation=ATAN(~/tmpr)*180/PI
+  WRITE BY NAME n, educed(n-1), vortex_density, Q1int, Q2int, Q3int, Q4int, pstrainint, azimut, elevation, midx, vortex_length, midy
+  WRITE TO out3 n, vortex_density, Q1int, Q2int, Q3int, Q4int, pstrainint, azimut, elevation, midx, Retau*vortex_length, midy, educed(n-1)
+  mcenters=CREATE('mean_vortex_centers'n'.dat'); DO WRITE TO mcenters Retau*resx*i, mvortex_cores(i,2)*resz*Retau, mvortex_cores(i,1)*Retau FOR i=lxbwd TO lxfwd; CLOSE mcenters
+
+  #ifdef writevtk
+
+  vtkname = WRITE('CField'n'.vtk')
+  outfile = CREATE(vtkname)
+
+  WRITE TO outfile "# vtk DataFile Version 2.0"
+  WRITE TO outfile "DNS lambda2"
+  WRITE TO outfile "BINARY"
+  WRITE TO outfile "DATASET RECTILINEAR_GRID"
+  WRITE TO outfile "DIMENSIONS "2*box_length+1" "box_heigth+1" "2*box_width+1
+  WRITE TO outfile "X_COORDINATES "2*box_length+1" float"
+  LOOP FOR ix=0 TO 2*box_length
+    tmp=SINGLE(2*PI*Retau/alfa0*ix/(2*nxd))
+    ByteSwap(^tmp); WRITE BINARY TO outfile tmp
+  REPEAT
+  WRITE TO outfile "Y_COORDINATES "box_heigth+1" float"
+  LOOP FOR iy=0 TO box_heigth 
+    tmp=SINGLE(y(iy)*Retau)
+    ByteSwap(^tmp); WRITE BINARY TO outfile tmp
+  REPEAT
+  WRITE TO outfile "Z_COORDINATES "2*box_width+1" float"
+  LOOP FOR iz=0 TO 2*box_width
+    tmp=SINGLE(2*PI*Retau/beta0*iz/nzd)
+    ByteSwap(^tmp); WRITE BINARY TO outfile tmp
+  REPEAT
+  WRITE TO outfile "POINT_DATA " (2*box_length+1)*(2*box_width+1)*(box_heigth+1)
+
+  WRITE TO outfile "SCALARS lambda2 float 1"
+  WRITE TO outfile "LOOKUP_TABLE default"
+  LOOP FOR iz=-box_width TO box_width AND iy=0 TO box_heigth AND ix=-box_length TO box_length
+        tmp=SINGLE(lambdaavg(ix,iz,iy,n-1)); ByteSwap(^tmp); WRITE BINARY TO outfile tmp 
+  REPEAT
+  
+  WRITE TO outfile "SCALARS Q2 float 1"
+  WRITE TO outfile "LOOKUP_TABLE default"
+  LOOP FOR iz=-box_width TO box_width AND iy=0 TO box_heigth AND ix=-box_length TO box_length
+        tmp=SINGLE(rms_uv(ix,iz,iy,n-1).Q2); ByteSwap(^tmp); WRITE BINARY TO outfile tmp 
+  REPEAT
+
+  WRITE TO outfile "SCALARS Q4 float 1"
+  WRITE TO outfile "LOOKUP_TABLE default"
+  LOOP FOR iz=-box_width TO box_width AND iy=0 TO box_heigth AND ix=-box_length TO box_length
+        tmp=SINGLE(rms_uv(ix,iz,iy,n-1).Q4); ByteSwap(^tmp); WRITE BINARY TO outfile tmp 
+  REPEAT
+
+  WRITE TO outfile "SCALARS Q1avg float 1"
+  WRITE TO outfile "LOOKUP_TABLE default"
+  LOOP FOR iz=-box_width TO box_width AND iy=0 TO box_heigth AND ix=-box_length TO box_length
+        tmp=SINGLE(rmsavg_uv(ix,iz,iy,n-1).Q1); ByteSwap(^tmp); WRITE BINARY TO outfile tmp 
+  REPEAT
+
+  WRITE TO outfile "SCALARS Q2avg float 1"
+  WRITE TO outfile "LOOKUP_TABLE default"
+  LOOP FOR iz=-box_width TO box_width AND iy=0 TO box_heigth AND ix=-box_length TO box_length
+        tmp=SINGLE(rmsavg_uv(ix,iz,iy,n-1).Q2); ByteSwap(^tmp); WRITE BINARY TO outfile tmp 
+  REPEAT
+
+  WRITE TO outfile "SCALARS Q3avg float 1"
+  WRITE TO outfile "LOOKUP_TABLE default"
+  LOOP FOR iz=-box_width TO box_width AND iy=0 TO box_heigth AND ix=-box_length TO box_length
+        tmp=SINGLE(rmsavg_uv(ix,iz,iy,n-1).Q3); ByteSwap(^tmp); WRITE BINARY TO outfile tmp 
+  REPEAT
+
+  WRITE TO outfile "SCALARS Q4avg float 1"
+  WRITE TO outfile "LOOKUP_TABLE default"
+  LOOP FOR iz=-box_width TO box_width AND iy=0 TO box_heigth AND ix=-box_length TO box_length
+        tmp=SINGLE(rmsavg_uv(ix,iz,iy,n-1).Q4); ByteSwap(^tmp); WRITE BINARY TO outfile tmp 
+  REPEAT
+
+  WRITE TO outfile "SCALARS pressure float 1"
+  WRITE TO outfile "LOOKUP_TABLE default"
+  LOOP FOR iz=-box_width TO box_width AND iy=0 TO box_heigth AND ix=-box_length TO box_length
+        tmp=SINGLE(pavg(ix,iz,iy,n-1)); ByteSwap(^tmp); WRITE BINARY TO outfile tmp 
+  REPEAT
+
+  WRITE TO outfile "SCALARS pstrain float 1"
+  WRITE TO outfile "LOOKUP_TABLE default"
+  LOOP FOR iz=-box_width TO box_width AND iy=0 TO box_heigth AND ix=-box_length TO box_length
+        tmp=SINGLE(pstrain(ix,iz,iy,n-1)); ByteSwap(^tmp); WRITE BINARY TO outfile tmp 
+  REPEAT
+
+  WRITE TO outfile "VECTORS velocity float"
+  LOOP FOR iz=-box_width TO box_width AND iy=0 TO box_heigth AND ix=-box_length TO box_length
+    tmpu=SINGLE(Vavg(ix,iz,iy,n-1).u); tmpv=SINGLE(Vavg(ix,iz,iy,n-1).v); tmpw=SINGLE(Vavg(ix,iz,iy,n-1).w) 
+    ByteSwap(^tmpu); ByteSwap(^tmpv);ByteSwap(^tmpw); WRITE BINARY TO outfile tmpu,tmpv,tmpw 
+  REPEAT
+
+  WRITE TO outfile "VECTORS vorticity float"
+  LOOP FOR iz=-box_width TO box_width AND iy=0 TO box_heigth AND ix=-box_length TO box_length
+    tmpu=SINGLE(omegaavg(ix,iz,iy,n-1).u); tmpv=SINGLE(omegaavg(ix,iz,iy,n-1).v); tmpw=SINGLE(omegaavg(ix,iz,iy,n-1).w) 
+    ByteSwap(^tmpu); ByteSwap(^tmpv);ByteSwap(^tmpw); WRITE BINARY TO outfile tmpu,tmpv,tmpw 
+  REPEAT
+  CLOSE outfile
+  #endif 
+
+  #ifdef writetec
+  outfile=CREATE("CField"n".dat")
+  WRITE TO outfile 'VARIABLES="x" "y" "z" "u" "v" "w" "omegax" "omegay" "omegaz" "lambda2" "Q2" "Q4" "Q1avg" "Q2avg" "Q3avg" "Q4avg" "p" "pstrain"'
+  WRITE TO outfile 'ZONE I='2*box_length+1',J='2*box_width+1',K='box_heigth+1' F=POINT'
+  LOOP FOR iy=0 TO box_heigth
+     LOOP FOR iz=-box_width TO box_width
+        LOOP FOR ix=-box_length TO box_length
+            WRITE TO outfile resx*ix*Retau, Retau*y(iy), resz*iz*Retau, Vavg(ix,iz,iy,n-1).u, Vavg(ix,iz,iy,n-1).v, Vavg(ix,iz,iy,n-1).w, 
+                             omegaavg(ix,iz,iy,n-1).u, omegaavg(ix,iz,iy,n-1).v, omegaavg(ix,iz,iy,n-1).w,
+                             lambdaavg(ix,iz,iy,n-1), rms_uv(ix,iz,iy,n-1).Q2, rms_uv(ix,iz,iy,n-1).Q4, rmsavg_uv(ix,iz,iy,n-1).Q1, rmsavg_uv(ix,iz,iy,n-1).Q2,
+                             rmsavg_uv(ix,iz,iy,n-1).Q3, rmsavg_uv(ix,iz,iy,n-1).Q4, pavg(ix,iz,iy,n-1), pstrain(ix,iz,iy,n-1)
+        REPEAT
+     REPEAT
+  REPEAT
+  CLOSE outfile
+  #endif
+REPEAT eachphase
+CLOSE out3
+outfile=CREATE("vortex_heigth.dat")
+LOOP FOR iy=0 TO box_heigth
+  WRITE TO outfile  Retau*y(iy), educed_at_heigth(iy,0..dn-1)
+REPEAT
+CLOSE outfile
+CLOSE condfield

@@ -1,16 +1,15 @@
+!USE rtchecks
 !#define bodyforce
-!#define passivescal
+!#define scalar
+!#define buoyancy
 gamma=0
-outinterv=0
 USE dnsdata
 USE dnsdirect
-!USE rtchecks
-read_restart_file
+read_restart_file; cont=FLOOR(time/dt_field)
+outstats()
+WRITE BY NAME nx,nxd, nz,nzd
 
-
-outstats();
 LOOP forward WHILE time < t_max-deltat/2
-  
   time=~+2/RK1_rai_coeff*deltat
   buildrhs(RK1_rai);linsolve(RK1_rai_coeff/deltat)
   vetaTOuvw; computeflowrate(RK1_rai_coeff/deltat)
@@ -21,5 +20,5 @@ LOOP forward WHILE time < t_max-deltat/2
   buildrhs(RK3_rai);linsolve(RK3_rai_coeff/deltat)
   vetaTOuvw; computeflowrate(RK3_rai_coeff/deltat)
   outstats()
-
+  IF reread THEN read_initial_data; reread=NO
 REPEAT forward

@@ -12,9 +12,9 @@ LOOP FOR iy=MAX(1,nyl-2) TO MIN(ny-1,nyh+2) WITH derivs_standalone(iy):
   DO matder(ir,ic) = (y(iy-2+ic)-y(iy))^(4-ir) FOR ic=0 TO 4 AND ir=0 TO 4
   LUdecomp matder
   d1=0; tnder=0; tnder(3) = 1
-  d1(-2+(*)) = matder \ tnder
+  d1(-2+(*)) = matder\tnder
   d2=0; tnder=0; tnder(2) = 2
-  d2(-2+(*)) = matder \ tnder
+  d2(-2+(*)) = matder\tnder
 REPEAT
 
 SUBROUTINE ByteSwap(POINTER TO SINGLE xxx) FOLLOWS
