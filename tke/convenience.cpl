@@ -55,12 +55,13 @@ END fourier2physical
 
 REAL FUNCTION yintf(REAL f(*))
   RESULT=0
-  LOOP FOR iy=[nyl DIV 2]*2+1 TO nyh BY 2 
-   yp1=y(iy+1)-y(iy); ym1=y(iy-1)-y(iy) 
+  ! Change to adapt to both cases nproc=1 and nproc>1 in the same run
+  LOOP FOR iy=[nyl DIV 2]*2+1 TO nyh BY 2
+   yp1=y(iy+1)-y(iy); ym1=y(iy-1)-y(iy)
    a1=-1/3*ym1+1/6*yp1+1/6*yp1*yp1/ym1
    a3=+1/3*yp1-1/6*ym1-1/6*ym1*ym1/yp1
    a2=yp1-ym1-a1-a3
-   RESULT=~+a1*f(iy-1) + a2*f(iy) + a3*f(iy+1)    
+   RESULT=~+a1*f(iy-1) + a2*f(iy) + a3*f(iy+1)
   REPEAT
 END yintf
 
@@ -88,15 +89,18 @@ SUBROUTINE read_field_parallel(STRING field_name)
 END read_field_parallel
 
 SUBROUTINE read_field(STRING field_name)
-  WRITE "Reading field_file",field_name
-  diskfield=OPEN(field_name)
-  WITH diskfield
-    LOOP FOR iy = nyl-2 TO nyh+2
-      DO V(ix,*,iy).v=fieldimage(iy,ix,*).v; V(ix,*,iy).u=fieldimage(iy,ix,*).eta FOR ALL ix
-    REPEAT LOOP
-    V(0,0,*).u.REAL=uavimage(nyl-2..nyh+2)
-    V(0,0,*).w.REAL=wavimage(nyl-2..nyh+2)
-  CLOSE diskfield
+  IF has_terminal THEN WRITE "Reading field_file",field_name
+  IF NOT first THEN READ FROM prev
+    diskfield=OPEN(field_name)
+    WITH diskfield:
+     V(0,0,*).u.REAL=uavimage(nyl-2..nyh+2)
+     V(0,0,*).w.REAL=wavimage(nyl-2..nyh+2)
+     LOOP FOR iy=nyl-2 TO nyh+2
+        DO V(ix,iz,iy).v=fieldimage(iy,ix,iz).v FOR ALL ix,iz EXCEPT ix=0 AND iz=0
+        DO V(ix,iz,iy).u=fieldimage(iy,ix,iz).eta FOR ALL ix,iz EXCEPT ix=0 AND iz=0
+     REPEAT LOOP
+     CLOSE diskfield
+  IF NOT last THEN WRITE TO next
 END read_field
 
 SUBROUTINE read_field_uvw(STRING field_name)
@@ -137,7 +141,7 @@ IF first THEN
   f2(0)=SUM d240(i)*f0(1+i) FOR i=-2 TO 2
   f2(-1)=SUM d24m1(i)*f0(1+i) FOR i=-2 TO 2
 END IF
-IF last THEN  
+IF last THEN
   f2(ny)=SUM d24n(i)*f0(ny-1+i) FOR i=-2 TO 2
   f2(ny+1)=SUM d24np1(i)*f0(ny-1+i) FOR i=-2 TO 2
 END IF
@@ -146,7 +150,7 @@ IF first THEN
   WITH derivatives(1): f2(1)=~-(d0(-1)*f2(0)+d0(-2)*f2(-1))
   WITH derivatives(2): f2(2)=~-d0(-2)*f2(0)
 END IF
-IF last THEN  
+IF last THEN
   WITH derivatives(ny-1): f2(ny-1)=~-(d0(1)*f2(ny)+d0(2)*f2(ny+1))
   WITH derivatives(ny-2): f2(ny-2)=~-d0(2)*f2(ny)
 END IF
@@ -154,4 +158,3 @@ LeftLUDivStep1(f2,D0mat,f2)
 END deriv2
 
 END convenience
-
