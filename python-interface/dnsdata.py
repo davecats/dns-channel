@@ -120,29 +120,27 @@ def readfield(fname):
 def readscalarfield(fname):
   return np.memmap(fname,dtype=np.complex128,mode='r',shape=(ny+3,nx+1,2*nz+1),offset=(8*9+8*(ny+3)*2+16*2*((ny+3)*(nx+1)*(2*nz+1))))
 
-# Convert veta2uvw, Remember: eta=+I*beta*u-I*alfa*w
-def veta2uvw(veta):
-  uvw = np.zeros((ny+3,nx+1,2*nz+1), dtype=VELOCITY)
-  uvw['v']+=veta['v'];
+# Define a velocity class, with methods
+class velocity:
+    cdata=fftw.empty_aligned((3,ny+3,nx+1,2*nz+1),dtype='complex128')
+    rdata=cdata.view(dtype=np.float64).reshape([3,ny+3,2*nx+2,2*nz+1])
+    u=cdata[0,...].view(); v=cdata[1,...].view(); w=cdata[2,...].view()
+    ru=cdata[0,...].view(dtype=np.float64).reshape([ny+3,2*nx+2,2*nz+1]);
+    rv=cdata[1,...].view(dtype=np.float64).reshape([ny+3,2*nx+2,2*nz+1]);
+    rw=cdata[2,...].view(dtype=np.float64).reshape([ny+3,2*nx+2,2*nz+1]);
+    fftin=fftw.empty_aligned((nx+2,2*nz+1),dtype='complex128')
+    fftout=fftw.empty_aligned((2*nx+2,2*nz+1),dtype='float64')
+    fft=fftw.FFTW(fftin,fftout, axes=(-1,-2), direction='FFTW_BACKWARD')
+    def ift(self): # consider weather adding dealiasing
+      for iV,iy in [ (iV,iy) for iV in range(3) for iy in range(ny+3)]:
+        self.fftin[:nx+1,0:nz+1]=self.cdata[iV,iy,:,nz:]; self.fftin[:nx+1,nz+1:]=self.cdata[iV,iy,:,0:nz]; self.fftin[nx+1,:]*=0
+        self.fft.execute()
+        self.rdata[iV,iy,...]=self.fftout
+    def reset(self):
+      self.cdata*=0
+
+# Convert veta2uvw, Remember: eta=+I*beta*u-I*alfa*
+def veta2uvw(veta,uvw):
   alfa=alfa0*np.arange(nx+1).reshape(1,nx+1,1); beta=beta0*np.arange(-nz,nz+1).reshape(1,1,2*nz+1); k2=alfa*alfa+beta*beta; k2[0,0,izd(0)]=1.0
-  vy=deriv('d1',veta[...]['v'])
-  uvw[...]['u']+=1j*(alfa*vy-beta*veta[...]['eta'])/k2
-  uvw[...]['w']+=1j*(beta*vy+alfa*veta[...]['eta'])/k2
-  return uvw
-
-# Declare some arrays for Fourier transforming (XXX extend for de-aliasing)
-vplane = fftw.empty_aligned((3,nx+2,2*nz+1),dtype='complex128')
-rvplane = fftw.empty_aligned((3,2*nx+2,2*nz+1),dtype='float64')
-fft = fftw.FFTW(vplane,rvplane, axes=(-1,-2), direction='FFTW_BACKWARD')
-
-# Backward Fourier transform of a field
-def ift(F,f):
-    l=len(F.dtype.names)
-    n=F.dtype.names
-    for i in range(l):
-      vplane[i,:nx+1,0:nz+1]=F[:,nz:][n[i]];
-      vplane[i,:nx+1,nz+1:]=F[:,0:nz][n[i]];
-      vplane[i,nx+1,:]*=0
-    fft.execute()
-    for i in range(l):
-      f[...][n[i]]=rvplane[i,...]
+  uvw.u+=veta[...]['eta']; uvw.u*=1j/k2; uvw.v+=veta['v']; vy=deriv('d1',uvw.v); vy*=1j/k2;
+  uvw.w+=beta*vy+alfa*uvw.u; uvw.u*=-beta; uvw.u+=alfa*vy
