@@ -117,9 +117,6 @@ IF last THEN
 END IF
 END setup_derivatives
 
-DO WITH derivatives(iy): WRITE iy, d14m1, d14np1 FOR ALL iy
-STOP
-
 ARRAY(-nz..nz,nyl..nyh+2,-2..2) OF REAL D2vmat=0, etamat=0
 #ifdef scalar
 ARRAY(-nz..nz,nyl..nyh+2,-2..2) OF REAL phimat=0

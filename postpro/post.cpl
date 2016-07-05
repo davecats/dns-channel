@@ -1,5 +1,6 @@
-USE dnsdata
-USE dnsdirect
+gamma=0
+USE ../dnsdata
+USE ../dnsdirect
 
 INTEGER nfmin,nfmax,maxquote,flag_eps
 ASK nfmin,nfmax,maxquote; nftot=nfmax-nfmin+1
@@ -31,7 +32,6 @@ LOOP files FOR n=nfmin TO nfmax
  WRITE "Reading field_file",field_name
  diskfield=OPEN(field_name)
  WITH diskfield
-   WRITE BY NAME timage
    V(0,0,*).u.REAL=uavimage(miny..maxy)
    V(0,0,*).w.REAL=wavimage(miny..maxy)
 	LOOP FOR iy = miny TO maxy
