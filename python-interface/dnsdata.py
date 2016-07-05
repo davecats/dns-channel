@@ -93,15 +93,14 @@ rhsder=np.zeros([5],np.float64); rhsder[2]=np.float64(2.0); der[ny+2,:]['d2']=so
 d0mat=banded_form(der[2:ny+1,:]['d0'])
 
 # Derivate
-def deriv(d,f):
-  df = np.zeros(np.shape(f),f.dtype); bcast = np.ones(len(np.shape(f)),int); bcast[0]=5
+def deriv(d,f,df):
+  bcast = np.ones(len(np.shape(f)),int); bcast[0]=5
   for iy in range(0,ny+3):
     iyc = iy*(iy>1 and iy < ny+1) + ny*(iy>=ny+1) + 2*(iy<=1)
     df[iy,...] += np.sum(der[iy,:][d].reshape(bcast)*f[iyc-2:iyc+3,...],axis=0)
   df[2]-=der[2,1]['d0']*df[1]+der[2,0]['d0']*df[0];             df[3]-=der[3,0]['d0']*df[1]
   df[ny]-=der[ny,3]['d0']*df[ny+1]+der[ny,4]['d0']*df[ny+2];    df[ny-1]-=der[ny-1,4]['d0']*df[ny+1]
   df[2:ny+1]=solve_banded((2,2),d0mat,df[2:ny+1])
-  return df
 
 # Read a field file
 def readfield(fname):
@@ -142,5 +141,6 @@ class velocity:
 # Convert veta2uvw, Remember: eta=+I*beta*u-I*alfa*
 def veta2uvw(veta,uvw):
   alfa=alfa0*np.arange(nx+1).reshape(1,nx+1,1); beta=beta0*np.arange(-nz,nz+1).reshape(1,1,2*nz+1); k2=alfa*alfa+beta*beta; k2[0,0,izd(0)]=1.0
-  uvw.u+=veta[...]['eta']; uvw.u*=1j/k2; uvw.v+=veta['v']; vy=deriv('d1',uvw.v); vy*=1j/k2;
-  for iy in range(ny+3):  uvw.w[iy,...]+=beta[0,...]*vy[iy,...]; uvw.w[iy,...]+=alfa[0,...]*uvw.u[iy,...]; uvw.u[iy,...]*=-beta[0,...]; uvw.u[iy,...]+=alfa[0,...]*vy[iy,...]
+  uvw.u+=veta[...]['eta']; uvw.u*=1j/k2; uvw.v+=veta['v']; deriv('d1',uvw.v,uvw.w); uvw.w*=1j/k2;
+  for iy in range(ny+3):  vy=uvw.w[iy,...].copy(); uvw.w[iy,...]=beta[0,...]*vy+alfa[0,...]*uvw.u[iy,...]; uvw.u[iy,...]*=-beta[0,...]; uvw.u[iy,...]+=alfa[0,...]*vy
+  uvw.u[:,0,izd(0)]*=0; uvw.v[:,0,izd(0)]*=0; uvw.w[:,0,izd(0)]*=0
