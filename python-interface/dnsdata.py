@@ -143,4 +143,4 @@ class velocity:
 def veta2uvw(veta,uvw):
   alfa=alfa0*np.arange(nx+1).reshape(1,nx+1,1); beta=beta0*np.arange(-nz,nz+1).reshape(1,1,2*nz+1); k2=alfa*alfa+beta*beta; k2[0,0,izd(0)]=1.0
   uvw.u+=veta[...]['eta']; uvw.u*=1j/k2; uvw.v+=veta['v']; vy=deriv('d1',uvw.v); vy*=1j/k2;
-  uvw.w+=beta*vy+alfa*uvw.u; uvw.u*=-beta; uvw.u+=alfa*vy
+  for iy in range(ny+3):  uvw.w[iy,...]+=beta[0,...]*vy[iy,...]; uvw.w[iy,...]+=alfa[0,...]*uvw.u[iy,...]; uvw.u[iy,...]*=-beta[0,...]; uvw.u[iy,...]+=alfa[0,...]*vy[iy,...]
