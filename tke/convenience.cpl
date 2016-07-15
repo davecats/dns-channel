@@ -2,7 +2,7 @@ DERIVS = STRUCTURE(COMPLEX ux,uy,uz,vx,vy,vz,wx,wy,wz)
 DERPRODS = STRUCTURE(COMPLEX ux2,vx2,wx2,uy2,vy2,wy2,uz2,vz2,wz2)
 DERPRODSEXT = STRUCTURE(COMPLEX ux2,vx2,wx2,uy2,vy2,wy2,uz2,vz2,wz2,uxvx,uyvy,uzvz,uxwx,uywy,uzwz,vxwx,vywy,vzwz)
 
-STRUCTURE[ARRAY(-2..2) OF REAL d1,d2] derivs_standalone(MAX(1,nyl-2)..MIN(ny-1,nyh+2))
+STRUCTURE[ARRAY(-2..2) OF REAL d1,d2] derivs_standalone(nyl-2..nyh+2)
 INLINE REAL FUNCTION D1(REAL f(*)) = d1(-2)*f(-2)+d1(-1)*f(-1)+d1(0)*f(0)+d1(1)*f(1)+d1(2)*f(2)
 INLINE REAL FUNCTION D2(REAL f(*)) = d2(-2)*f(-2)+d2(-1)*f(-1)+d2(0)*f(0)+d2(1)*f(1)+d2(2)*f(2)
 INLINE COMPLEX FUNCTION D1(COMPLEX f(*)) = D1(f.REAL)+I*D1(f.IMAG)
@@ -17,6 +17,8 @@ LOOP FOR iy=MAX(1,nyl-2) TO MIN(ny-1,nyh+2) WITH derivs_standalone(iy):
   d2=0; tnder=0; tnder(2) = 2
   d2(-2+(*)) = matder\tnder
 REPEAT
+IF first THEN WITH derivs_standalone: d1(-1,*)=d14m1; d2(-1,*)=d24m1; d1(0,*)=d140; d2(0,*)=d240;
+IF last  THEN WITH derivs_standalone: d1(ny,*)=d14n;  d2(ny,*)=d24n;  d1(ny+1,*)=d14np1; d2(ny+1,*)=d24np1;
 
 SUBROUTINE ByteSwap(POINTER TO SINGLE xxx) FOLLOWS
 SUBROUTINE fourier2physical(ARRAY(*,*) OF COMPLEX plane; POINTER TO ARRAY(*,*) OF COMPLEX planed) FOLLOWS

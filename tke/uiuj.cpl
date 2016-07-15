@@ -165,8 +165,6 @@ DO WITH uiuj: deriv2(var(*,i),vdiff(*,i));    LeftLUDivStep2(vdiff(*,i),D0mat); 
 DO WITH uiuj: deriv(PHIttrsp(*,i),ttrsp(*,i)); LeftLUDivStep2(ttrsp(*,i),D0mat); FOR ALL i;
 ! ptrsp
 DO WITH uiuj: deriv(PHIptrsp(*,i),ptrsp(*,i)); LeftLUDivStep2(ptrsp(*,i),D0mat); FOR ALL i;
-! PDIFF(TKE)
-! WITH tkedata: deriv(PHI_PDIFF,PDIFF); LeftLUDivStep2(PDIFF,D0mat); PDIFF=-~
 ! prod
 DO WITH mean(iy), uiuj(iy): prod(1)=-2*var(4)*Uy; prod(3)=-2*var(6)*Wy; prod(4)=-var(2)*Uy; prod(5)=-var(4)*Wy-var(6)*Uy; prod(6)=-var(2)*Wy; FOR ALL iy
 DO WITH mean(iy), uiuj(iy), mke(iy): produv=-0.5*prod(1); prodvw=-0.5*prod(3) FOR ALL iy
