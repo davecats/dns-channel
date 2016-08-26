@@ -1,0 +1,79 @@
+!USE rtchecks
+!#define bodyforce
+REAL gamma 
+USE dnsdata
+USE dnsdirect
+
+read_restart_file; count=FLOOR(time/dt_field)
+
+FILE pow_file; IF has_terminal THEN pow_file=CREATE("Powerdata")
+REAL wwy0, wwyn, wwy0p, wwy0n, wwynp, wwynn
+REAL A, A_f, omega, delta; INTEGER nm_x, nm_z
+FILE in_parameters_wave=OPEN("parameters_wave.in")
+READ BY NAME FROM in_parameters_wave A, A_f, omega, nm_x, nm_z, delta, gamma
+IF has_terminal THEN WRITE BY NAME A, A_f, omega, nm_x, nm_z, delta, gamma
+
+
+outstats()
+WRITE BY NAME nx,nxd, nz,nzd
+
+LOOP forward WHILE time < t_max-deltat/2 
+
+  bc0(nm_x,nm_z).w.REAL=(IF nm_x=0 AND nm_z=0 THEN -A ELSE -A/2)*SIN(omega*(time+deltat))
+  bc0(nm_x,nm_z).w.IMAG=(IF nm_x=0 AND nm_z=0 THEN  0 ELSE -A/2)*COS(omega*(time+deltat))
+  bcn(nm_x,nm_z).w.REAL=(IF nm_x=0 AND nm_z=0 THEN -A ELSE -A/2)*SIN(omega*(time+deltat))
+  bcn(nm_x,nm_z).w.IMAG=(IF nm_x=0 AND nm_z=0 THEN  0 ELSE -A/2)*COS(omega*(time+deltat))
+  bc0(0,-nm_z).w=CONJG(bc0(0,nm_z).w)
+  bcn(0,-nm_z).w=CONJG(bcn(0,nm_z).w)
+
+  time=~+2/RK1_rai_coeff*deltat
+  buildrhs(RK1_rai);linsolve(RK1_rai_coeff/deltat)
+  vetaTOuvw; computeflowrate(RK1_rai_coeff/deltat)
+  time=~+2/RK2_rai_coeff*deltat
+  buildrhs(RK2_rai);linsolve(RK2_rai_coeff/deltat)
+  vetaTOuvw; computeflowrate(RK2_rai_coeff/deltat)
+  time=~+2/RK3_rai_coeff*deltat
+  buildrhs(RK3_rai);linsolve(RK3_rai_coeff/deltat)
+  vetaTOuvw; computeflowrate(RK3_rai_coeff/deltat)
+  IF reread THEN read_initial_data; reread=NO
+  outstats()
+
+  IF last THEN
+    Vd=0; REAL wwy
+    LOOP FOR ix=0 TO nx AND iz=-nz TO nz 
+      Vd(ix,IF iz<0 THEN nzd+iz ELSE iz).u = SUM d14n(i)*V(ix,iz,ny-1+i).w FOR ALL i
+      Vd(ix,IF iz<0 THEN nzd+iz ELSE iz).w = V(ix,iz,ny).w
+    REPEAT
+    DO WITH Vd(ix,*): IFT(u); IFT(w) FOR ALL ix 
+    DO WITH Vd(*,iz): RFT(u); RFT(w) FOR ALL iz 
+
+    wwyn=0; wwynp=0; wwynn=0
+    LOOP FOR ix=0 TO 2*nxd-1 AND ALL iz
+      wwy=Vd(*,iz).u.REALIFIED(ix)*Vd(*,iz).w.REALIFIED(ix)
+      wwyn = ~ + wwy; IF wwy>0 THEN wwynp = ~ + wwy ELSE wwynn = ~ + wwy
+    REPEAT
+    wwyn = ~/(2*nxd*nzd); wwynp = ~/(2*nxd*nzd); wwynn = ~/(2*nxd*nzd)
+  END IF
+
+  IF first THEN
+    Vd=0; REAL wwy 
+    LOOP FOR ix=0 TO nx AND iz=-nz TO nz 
+      Vd(ix,IF iz<0 THEN nzd+iz ELSE iz).u = SUM d140(i)*V(ix,iz,1+i).w FOR ALL i
+      Vd(ix,IF iz<0 THEN nzd+iz ELSE iz).w = V(ix,iz,0).w
+    REPEAT
+    DO WITH Vd(ix,*): IFT(u); IFT(w) FOR ALL ix 
+    DO WITH Vd(*,iz): RFT(u); RFT(w) FOR ALL iz 
+
+    wwy0=0; wwy0p=0; wwy0n=0
+    LOOP FOR ix=0 TO 2*nxd-1 AND ALL iz
+      wwy=Vd(*,iz).u.REALIFIED(ix)*Vd(*,iz).w.REALIFIED(ix)
+      wwy0 = ~ + wwy; IF wwy>0 THEN wwy0p = ~ + wwy ELSE wwy0n = ~ + wwy
+    REPEAT
+    wwy0 = ~/(2*nxd*nzd); wwy0p = ~/(2*nxd*nzd); wwy0n = ~/(2*nxd*nzd)
+  END IF
+
+  IF NOT first THEN READ  BINARY FROM prev wwy0, wwy0p, wwy0n; FLUSH prev
+  IF NOT last  THEN WRITE BINARY TO   next wwy0, wwy0p, wwy0n; FLUSH next
+  IF has_terminal THEN WRITE TO pow_file time, wwy0, wwy0p, wwy0n, wwyn, wwynp, wwynn; FLUSH(pow_file)
+  
+REPEAT forward
