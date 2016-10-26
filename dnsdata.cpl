@@ -3,7 +3,7 @@ USE fft
 USE rbmat
 USE parallel
 
-nsmp=1
+nsmp=4
 
 
 ! Parallel - initialization
@@ -22,13 +22,12 @@ IF iproc>1 THEN
 END IF
 first==(prev=NULL FILE); last==(next=NULL FILE); has_terminal==last
 
-
 USE rbmatmod
 
 INTEGER ny,nx,nz
 REAL alfa0, beta0, a, ymin, ymax, t_max, dt_field, dt_save
 REAL u_conv, u0, un, w_conv, w0, wn, t0, tn
-REAL ni,pr,gr,meanpx=-99,meanpz=-99,meanflowx=-99,meanflowz=-99,px=0,corrpx=0,pz=0,corrpz=0,flowx=0,flowz=0,deltat=0, cflmax=0, time=0
+SHARED REAL ni,pr,gr,meanpx=-99,meanpz=-99,meanflowx=-99,meanflowz=-99,px=0,corrpx=0,pz=0,corrpz=0,flowx=0,flowz=0,deltat=0, cflmax=0, time=0
 BOOLEAN time_from_restart
 STRING restart_file
 
@@ -122,7 +121,10 @@ ARRAY(-nz..nz,nyl..nyh+2,-2..2) OF REAL D2vmat=0, etamat=0
 ARRAY(-nz..nz,nyl..nyh+2,-2..2) OF REAL phimat=0
 #endif
 ARRAY(nyl..nyh+2,-2..2) OF REAL D0mat=0
-D0mat(nyl..nyh)=derivatives.d0; LUdecompStep D0mat
+D0mat(nyl..nyh)=derivatives.d0; LUdecompStep(D0mat)
+SHARED ARRAY(-nz..nz,0..1,0..1,-2..2) OF REAL LUbuf
+SHARED ARRAY(-nz..nz,0..3,0..1) OF REAL DECbuf
+SHARED ARRAY(-nz..nz,0..1,0..1) OF REAL DERbuf
 
 ARRAY(-2..2) OF REAL v0bc(-1..0)=0,vnbc(0..1)=0,eta0bc(-1..0)=0,etanbc(0..1)=0,phi0bc(-1..0)=0,phinbc(0..1)=0
 
@@ -274,7 +276,8 @@ VELOCITY velbuf(0..nx,-nz..nz)
 SUBROUTINE outstats
 INC outcont;
 IF outcont>0 THEN
-	outcont=0; getcfl(); cflm=0; energy=0; slice_energy=0; diss=0; slice_diss=0
+	!outcont=0; getcfl(); cflm=0; energy=0; slice_energy=0; diss=0; slice_diss=0
+        outcont=0; cfl=1; cflm=0; energy=0; slice_energy=0; diss=0; slice_diss=0
 
 	DO WITH V(ix,iz,iy):
 	slice_energy = ~ + 1/2 * [NORM(u)+NORM(v)+NORM(w)]*[IF ix=0 THEN 1 ELSE 2] *(y(iy+1)-y(iy-1))*0.5 FOR iy=nyl TO nyh AND ALL ix,iz EXCEPT ix=0 AND iz=0

@@ -97,7 +97,7 @@ IF last THEN WITH derivatives(ny-1)
   FOR ALL ix,iz
 END IF
 #endif
-PARALLEL LOOP FOR ismp=0 TO nsmp-1
+!PARALLEL LOOP FOR ismp=0 TO nsmp-1
  LOOP FOR iy=nyl-4 TO nyh+2
   IF iy<=nyh THEN
 #ifdef scalar
@@ -200,7 +200,7 @@ COMPLEX expl = ialfa*[ialfa*D(d1,uu)+D(d2,uv)+ibeta*D1_uw_]+
     FOR ix=ismp*(nx+1) DIV nsmp TO (ismp+1)*(nx+1) DIV nsmp -1 AND ALL iz
   END IF
  REPEAT
-REPEAT
+!REPEAT
 END buildrhs
 
 INLINE FUNCTION D20(ARRAY(*) OF COMPLEX f)=d240(-2)*f(-1)+d240(-1)*f(0)+d240(0)*f(1)+d240(1)*f(2)+d240(2)*f(3)
@@ -229,17 +229,15 @@ COMPLEX FUNCTION calcpn(INTEGER ix,iz)
 END calcpn
 
 SUBROUTINE linsolve(REAL lambda)
+!PARALLEL LOOP FOR ismp=0 TO nsmp-1
 LOOP FOR ix=0 TO nx
   alfa=alfa0*ix; ialfa==I*alfa
-  LOOP FOR ALL iz
+  LOOP FOR iz=-nz+(ismp*(2*nz+1) DIV nsmp) TO -nz+((ismp+1)*(2*nz+1) DIV nsmp) -1
     beta=beta0*iz; ibeta==I*beta
     k2=alfa^2+beta^2
     LOOP FOR iy=nyl TO nyh AND ALL i WITH derivatives(iy)
       D2vmat(iz,iy,i)=lambda*[d2(i)-k2*d0(i)]-OS(iy,i)
       etamat(iz,iy,i)=lambda*d0(i)-SQ(iy,i)
-#ifdef scalar
-      phimat(iz,iy,i)=lambda*d0(i)-pr*(SQ(iy,i))
-#endif
     REPEAT
     ! condizioni al contorno
     IF first THEN WITH bc0(ix,iz)
@@ -259,11 +257,6 @@ LOOP FOR ix=0 TO nx
       V(ix,iz,2).v=~-D2vmat(iz,2,-2)*v/v0bc(0,-1)
       V(ix,iz,1).u=~-etamat(iz,1,-1)*eta/eta0bc(0,-1)
       V(ix,iz,2).u=~-etamat(iz,2,-2)*eta/eta0bc(0,-1)
-#ifdef scalar
-      applybc_0(phimat(iz),phi0bc)
-      phi(ix,iz,1)=~-phimat(iz,1,-1)*ph/phi0bc(0,-1)
-      phi(ix,iz,2)=~-phimat(iz,2,-2)*ph/phi0bc(0,-1)
-#endif
     END IF
     IF last THEN WITH bcn(ix,iz)
       IF ix=0 AND iz=0 THEN
@@ -282,61 +275,57 @@ LOOP FOR ix=0 TO nx
       V(ix,iz,ny-2).v=~-D2vmat(iz,ny-2,2)*v/vnbc(0,1)
       V(ix,iz,ny-1).u=~-etamat(iz,ny-1,1)*eta/etanbc(0,1)
       V(ix,iz,ny-2).u=~-etamat(iz,ny-2,2)*eta/etanbc(0,1)
-#ifdef scalar
-      applybc_n(phimat(iz),phinbc)
-      phi(ix,iz,ny-1)=~-phimat(iz,ny-1,1)*ph/phinbc(0,1)
-      phi(ix,iz,ny-2)=~-phimat(iz,ny-2,2)*ph/phinbc(0,1)
-#endif
     END IF
-    LUdecompStep D2vmat(iz); LUdecompStep etamat(iz)
-    WITH V(ix,iz,*)
-    LeftLUDivStep1(v.REAL,D2vmat(iz),v.REAL)
-    LeftLUDivStep1(v.IMAG,D2vmat(iz),v.IMAG)
-    LeftLUDivStep1(u.REAL,etamat(iz),u.REAL)
-    LeftLUDivStep1(u.IMAG,etamat(iz),u.IMAG)
-#ifdef scalar
-    LUdecompStep phimat(iz)
-    LeftLUDivStep1(phi(ix,iz,*).REAL,phimat(iz),phi(ix,iz,*).REAL)
-    LeftLUDivStep1(phi(ix,iz,*).IMAG,phimat(iz),phi(ix,iz,*).IMAG)
-#endif
-  REPEAT
-  FlushStep1
-  LOOP FOR ALL iz
-    WITH V(ix,iz,*):
-    LeftLUDivStep2(v.REAL,D2vmat(iz))
-    LeftLUDivStep2(v.IMAG,D2vmat(iz))
-    LeftLUDivStep2(u.REAL,etamat(iz))
-    LeftLUDivStep2(u.IMAG,etamat(iz))
-#ifdef scalar
-    LeftLUDivStep2(phi(ix,iz,*).REAL,phimat(iz))
-    LeftLUDivStep2(phi(ix,iz,*).IMAG,phimat(iz))
-#endif
+  REPEAT 
+  IF NOT last THEN 
+    IF ismp=0 THEN READ BINARY FROM next LUbuf
+    SYNC(ismp,nsmp)
+  END IF
+  DO LUdecompStep(D2vmat(iz),LUbuf(iz,0)); LUdecompStep(etamat(iz),LUbuf(iz,1)) FOR iz=-nz+(ismp*(2*nz+1) DIV nsmp) TO -nz+((ismp+1)*(2*nz+1) DIV nsmp) -1
+  SYNC(ismp,nsmp); IF (NOT first) AND ismp=0 THEN WRITE BINARY TO prev LUbuf
+  IF NOT last THEN 
+    IF ismp=0 THEN READ BINARY FROM next DECbuf
+    SYNC(ismp,nsmp)
+  END IF
+  DO WITH V(ix,iz,*):
+    LeftLUDivStep1(v.REAL,D2vmat(iz),v.REAL,DECbuf(iz,0))
+    LeftLUDivStep1(v.IMAG,D2vmat(iz),v.IMAG,DECbuf(iz,1))
+    LeftLUDivStep1(u.REAL,etamat(iz),u.REAL,DECbuf(iz,2))
+    LeftLUDivStep1(u.IMAG,etamat(iz),u.IMAG,DECbuf(iz,3))
+  FOR iz=-nz+(ismp*(2*nz+1) DIV nsmp) TO -nz+((ismp+1)*(2*nz+1) DIV nsmp) -1
+  SYNC(ismp,nsmp); IF (NOT first) AND ismp=0 THEN WRITE BINARY TO prev DECbuf
+  IF ismp=0 THEN FlushStep1
+  IF NOT first THEN 
+    IF ismp=0 THEN READ BINARY FROM prev DECbuf
+    SYNC(ismp,nsmp)
+  END IF
+  DO WITH V(ix,iz,*):
+    LeftLUDivStep2(v.REAL,D2vmat(iz),DECbuf(iz,0))
+    LeftLUDivStep2(v.IMAG,D2vmat(iz),DECbuf(iz,1))
+    LeftLUDivStep2(u.REAL,etamat(iz),DECbuf(iz,2))
+    LeftLUDivStep2(u.IMAG,etamat(iz),DECbuf(iz,3))
+  FOR iz=-nz+(ismp*(2*nz+1) DIV nsmp) TO -nz+((ismp+1)*(2*nz+1) DIV nsmp) -1
+  SYNC(ismp,nsmp); IF (NOT last) AND ismp=0 THEN WRITE BINARY TO next DECbuf
+  LOOP FOR iz=-nz+(ismp*(2*nz+1) DIV nsmp) TO -nz+((ismp+1)*(2*nz+1) DIV nsmp) -1 WITH V(ix,iz,*):
     IF last THEN
       v(ny)  =(bcn(ix,iz).v  -SUM v(ny-1+i)*vnbc(0,i) FOR i=-2 TO 0)/vnbc(0,1)
       v(ny+1)=(bcn(ix,iz).vy -SUM v(ny-1+i)*vnbc(1,i) FOR i=-2 TO 1)/vnbc(1,2)
       u(ny)=(bcn(ix,iz).eta-SUM u(ny-1+i)*etanbc(0,i) FOR i=-2 TO 0)/etanbc(0,1)
       u(ny+1)=(-SUM u(ny-1+i)*etanbc(1,i) FOR i=-2 TO 1)/etanbc(1,2)
-#ifdef scalar
-      phi(ix,iz,ny)  =(bcn(ix,iz).ph-SUM phi(ix,iz,ny-1+i)*etanbc(0,i) FOR i=-2 TO 0)/etanbc(0,1)
-      phi(ix,iz,ny+1)=(-SUM phi(ix,iz,ny-1+i)*etanbc(1,i) FOR i=-2 TO 1)/etanbc(1,2)
-#endif
     END IF
     IF first THEN
       v(0) =(bc0(ix,iz).v-SUM v(1+i)*v0bc(0,i) FOR i=0 TO 2)/v0bc(0,-1)
       v(-1)=(bc0(ix,iz).vy-SUM v(1+i)*v0bc(-1,i) FOR i=-1 TO 2)/v0bc(-1,-2)
       u(0) =(bc0(ix,iz).eta-SUM u(1+i)*eta0bc(0,i) FOR i=0 TO 2)/eta0bc(0,-1)
       u(-1)=(-SUM u(1+i)*eta0bc(-1,i) FOR i=-1 TO 2)/eta0bc(-1,-2)
-#ifdef scalar
-      phi(ix,iz,0) =(bc0(ix,iz).ph-SUM phi(ix,iz,1+i)*eta0bc(0,i) FOR i=0 TO 2)/eta0bc(0,-1)
-      phi(ix,iz,-1)=(-SUM phi(ix,iz,1+i)*eta0bc(-1,i) FOR i=-1 TO 2)/eta0bc(-1,-2)
-#endif
     END IF
   REPEAT
   FlushStep2
 REPEAT
+!REPEAT
 END linsolve
 
-SUBROUTINE deriv(ARRAY(*) OF REAL f0,f1^)
+SUBROUTINE deriv(ARRAY(*) OF REAL f0,f1^; POINTER TO ARRAY(0..1) OF REAL buf)
 IF first THEN
   f1(0)=SUM d140(i)*f0(1+i) FOR i=-2 TO 2
   f1(-1)=SUM d14m1(i)*f0(1+i) FOR i=-2 TO 2
@@ -354,36 +343,50 @@ IF last THEN
   WITH derivatives(ny-1): f1(ny-1)=~-(d0(1)*f1(ny)+d0(2)*f1(ny+1))
   WITH derivatives(ny-2): f1(ny-2)=~-d0(2)*f1(ny)
 END IF
-LeftLUDivStep1(f1,D0mat,f1)
+LeftLUDivStep1(f1,D0mat,f1,buf)
 END deriv
 
 SUBROUTINE vetaTOuvw
 ! Remember: eta=+I*beta*u-I*alfa*w
-WITH V(0,0,*): w.REAL=u.IMAG; u.IMAG=0; w.IMAG=0
-LOOP FOR ALL ix,iz EXCEPT ix=0 AND iz=0
-  WITH V(ix,iz,*):
-  deriv(v.REAL,w.REAL)
-  deriv(v.IMAG,w.IMAG)
-REPEAT
-FlushStep1
-LOOP FOR ALL ix
-  alfa=alfa0*ix
-  LOOP FOR ALL iz EXCEPT ix=0 AND iz=0
-    WITH V(ix,iz,*):
-    LeftLUDivStep2(w.REAL,D0mat)
-    LeftLUDivStep2(w.IMAG,D0mat)
-    FlushStep2
-    beta=beta0*iz; k2=alfa^2+beta^2
-    DO temp=I*(alfa*w(iy)-beta*u(iy))/k2
-      w(iy)=I*(beta*w(iy)+alfa*u(iy))/k2
-      u(iy)=temp
-    FOR ALL iy
+!PARALLEL LOOP FOR ismp=0 TO nsmp-1
+  IF ismp=0 THEN WITH V(0,0,*): w.REAL=u.IMAG; u.IMAG=0; w.IMAG=0
+  LOOP FOR ALL ix 
+    IF NOT last THEN 
+      IF ismp=0 THEN READ BINARY FROM next DERbuf
+      SYNC(ismp,nsmp)
+    END IF
+    LOOP FOR iz=-nz+(ismp*(2*nz+1) DIV nsmp) TO -nz+((ismp+1)*(2*nz+1) DIV nsmp) -1 EXCEPT ix=0 AND iz=0
+      WITH V(ix,iz,*):
+      deriv(v.REAL,w.REAL,DERbuf(iz,0))
+      deriv(v.IMAG,w.IMAG,DERbuf(iz,1))
+    REPEAT
+    SYNC(ismp,nsmp); IF (NOT first) AND ismp=0 THEN WRITE BINARY TO prev DERbuf;
+    IF ismp=0 THEN FlushStep1
+    alfa=alfa0*ix
+    IF NOT first THEN 
+      IF ismp=0 THEN READ BINARY FROM prev DERbuf
+      SYNC(ismp,nsmp)
+    END IF
+    DO WITH V(ix,iz,*): 
+      LeftLUDivStep2(w.REAL,D0mat,DERbuf(iz,0)); LeftLUDivStep2(w.IMAG,D0mat,DERbuf(iz,1)) 
+    FOR iz=-nz+(ismp*(2*nz+1) DIV nsmp) TO -nz+((ismp+1)*(2*nz+1) DIV nsmp) -1 EXCEPT ix=0 AND iz=0
+    SYNC(ismp,nsmp); IF (NOT last) AND ismp=0 THEN WRITE BINARY TO next DERbuf
+    IF ismp=0 THEN FlushStep2
+    LOOP FOR iz=-nz+(ismp*(2*nz+1) DIV nsmp) TO -nz+((ismp+1)*(2*nz+1) DIV nsmp) -1 EXCEPT ix=0 AND iz=0
+      WITH V(ix,iz,*):
+      beta=beta0*iz; k2=alfa^2+beta^2
+      DO temp=I*(alfa*w(iy)-beta*u(iy))/k2
+        w(iy)=I*(beta*w(iy)+alfa*u(iy))/k2
+        u(iy)=temp
+      FOR ALL iy
+    REPEAT
   REPEAT
-REPEAT
-FlushStep2
+!REPEAT
 END vetaTOuvw
 
+
 SUBROUTINE computeflowrate(REAL lambda)
+IF ismp=0 THEN
   REAL ucorr(nyl-2..nyh+2)=0
   DO ucorr(iy)=1 FOR iy=nyl TO nyh
   LOOP FOR iy=nyl TO nyh WITH derivatives(iy)
@@ -446,6 +449,8 @@ SUBROUTINE computeflowrate(REAL lambda)
   IF NOT first THEN READ BINARY FROM prev u1zero, w1zero; FLUSH prev
   IF NOT last  THEN WRITE BINARY TO next u1zero, w1zero; FLUSH next
 #endif
+END IF
+SYNC(ismp,nsmp)
 END computeflowrate
 
 END dnsdirect
