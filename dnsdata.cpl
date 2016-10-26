@@ -5,41 +5,51 @@ USE parallel
 
 nsmp=1
 
-
 ! Parallel - initialization
 INTEGER iproc,nproc
 IF COMMANDLINE.HI<1 THEN iproc=1; nproc=1 ELSE
 iproc=atoi(COMMANDLINE(1)); nproc=atoi(COMMANDLINE(2)); END IF
 bufsize=800; baseport=IPPORT_USERRESERVED+111
-FILE prev,next
+FILE prev(0..nsmp-1),next(0..nsmp-1),frs,lst
 IF iproc<nproc THEN
-  next=fdopen(tcpserver(baseport+iproc),"r+")
-  setvbuf(next,malloc(bufsize),_IOFBF,bufsize)
+  DO 
+    next(ismp)=fdopen(tcpserver(baseport+iproc+nproc*(ismp)),"r+")
+    setvbuf(next(ismp),malloc(bufsize),_IOFBF,bufsize)
+  FOR ismp=0 TO nsmp-1
 END IF
 IF iproc>1 THEN
-  prev=fdopen(tcpclient(COMMANDLINE(3),baseport+iproc-1),"r+")
-  setvbuf(prev,malloc(bufsize),_IOFBF,bufsize)
+  DO 
+    prev(ismp)=fdopen(tcpclient(COMMANDLINE(3),baseport+iproc-1+nproc*(ismp)),"r+")
+    setvbuf(prev(ismp),malloc(bufsize),_IOFBF,bufsize)
+  FOR ismp=0 TO nsmp-1
 END IF
-first==(prev=NULL FILE); last==(next=NULL FILE); has_terminal==last
-
+first==(prev(0)=NULL FILE); last==(next(0)=NULL FILE); has_terminal==last
+IF first AND nproc>1 THEN 
+  lst = fdopen(tcpserver(baseport+nproc*nsmp+1),"r+")
+  setvbuf(lst,malloc(bufsize),_IOFBF,bufsize)
+END IF
+IF last AND nproc>1 THEN 
+  frs = fdopen(tcpclient(COMMANDLINE(4),baseport+nproc*nsmp+1),"r+")
+  setvbuf(frs,malloc(bufsize),_IOFBF,bufsize)
+END IF
 
 USE rbmatmod
 
 INTEGER ny,nx,nz
 REAL alfa0, beta0, a, ymin, ymax, t_max, dt_field, dt_save
-REAL u_conv, u0, un, w_conv, w0, wn, t0, tn
-REAL ni,pr,gr,meanpx=-99,meanpz=-99,meanflowx=-99,meanflowz=-99,px=0,corrpx=0,pz=0,corrpz=0,flowx=0,flowz=0,deltat=0, cflmax=0, time=0
+REAL u_conv, u0, un, w_conv, w0, wn
+REAL ni,meanpx=-99,meanpz=-99,meanflowx=-99,meanflowz=-99,px,corrpx,pz,corrpz,flowx,flowz,deltat=0, cflmax=0, time
 BOOLEAN time_from_restart
 STRING restart_file
 
 
 SUBROUTINE read_initial_data
  FILE in_data=OPEN("dns.in")
- READ BY NAME FROM in_data ny,nx,nz,alfa0,beta0,ymin,ymax,a,ni,pr,gr; ni=1/ni; pr=1/pr;
+ READ BY NAME FROM in_data ny,nx,nz,alfa0,beta0,ymin,ymax,a,ni; ni=1/ni
  DO WHILE READ BY NAME FROM in_data meanpx OR meanflowx
  DO WHILE READ BY NAME FROM in_data meanpz OR meanflowz
  READ BY NAME FROM in_data u_conv, w_conv
- READ BY NAME FROM in_data u0, un, w0, wn, t0, tn
+ READ BY NAME FROM in_data u0, un, w0, wn
  DO WHILE READ BY NAME FROM in_data deltat OR cflmax
  READ BY NAME FROM in_data t_max, time_from_restart, dt_field, dt_save
  IF NOT READ BY NAME FROM in_data restart_file THEN restart_file=""
@@ -48,15 +58,18 @@ SUBROUTINE read_initial_data
    WRITE BY NAME nproc,nsmp
    WRITE BY NAME nx, nz, ny, time
    WRITE BY NAME meanflowx, meanpx, meanflowz, meanpz
-   WRITE BY NAME ymin, ymax, a, alfa0, beta0, 1/ni, 1/pr
-   WRITE BY NAME u_conv, u0, un, w_conv, w0, wn, t0, tn
+   WRITE BY NAME ymin, ymax, a, alfa0, beta0, 1/ni
+   WRITE BY NAME u_conv, u0, un, w_conv, w0, wn
    WRITE BY NAME deltat, cflmax, t_max, dt_save, dt_field
  END IF
 END read_initial_data
 
 BOOLEAN reread=NO
 SUBROUTINE kill_received(INTEGER signum)
- reread=YES
+ !reread=YES
+ <* 
+ exit( 0 );
+ *>
 END kill_received
 
 read_initial_data; signal(SIGUSR2,kill_received)
@@ -67,7 +80,6 @@ REAL y(MAX(-1,nyl-4)..MIN(ny+1,nyh+4))
 !DO y(i)=ymin+(ymax-ymin)*i/ny FOR ALL i !Mesh equispaziata
 !DO y(i)=ymin+(ymax-ymin)*[tanh(a*(i/ny-1))/tanh(a)+1] FOR ALL i !Boundary layer
 DO y(i)=ymin+0.5*(ymax-ymin)*[tanh(a*(2*i/ny-1))/tanh(a)+0.5*(ymax-ymin)] FOR ALL i !Channel
-
 
 STRUCTURE[ARRAY(-2..2) OF REAL d0,d1,d2,d4] derivatives(MAX(1,nyl-2)..MIN(ny-1,nyh+2))
 ARRAY(-2..2) OF REAL d040,d140,d240,d340,d14m1,d24m1, d04n,d14n,d24n,d14np1,d24np1
@@ -117,43 +129,34 @@ IF last THEN
 END IF
 END setup_derivatives
 
-ARRAY(-nz..nz,nyl..nyh+2,-2..2) OF REAL D2vmat=0, etamat=0
-#ifdef scalar
-ARRAY(-nz..nz,nyl..nyh+2,-2..2) OF REAL phimat=0
-#endif
-ARRAY(nyl..nyh+2,-2..2) OF REAL D0mat=0
-D0mat(nyl..nyh)=derivatives.d0; LUdecompStep D0mat
+ARRAY(-nz..nz,nyl..nyh+2,-2..2) OF REAL D2vmat, etamat
+ARRAY(nyl..nyh+2,-2..2) OF REAL D0mat
+D0mat(nyl..nyh)=derivatives.d0; LUdecompStep(D0mat,0)
 
-ARRAY(-2..2) OF REAL v0bc(-1..0)=0,vnbc(0..1)=0,eta0bc(-1..0)=0,etanbc(0..1)=0,phi0bc(-1..0)=0,phinbc(0..1)=0
+ARRAY(-2..2) OF REAL v0bc(-1..0)=0,vnbc(0..1)=0,eta0bc(-1..0)=0,etanbc(0..1)=0
 
 IF first THEN
   v0bc(0)=d040; v0bc(-1)=d140; eta0bc(0)=d040
   eta0bc(-1)=derivatives(1).d4
-  phi0bc(0)=d040; phi0bc(-1)=derivatives(1).d4 !Dirichlet
-! phi0bc(0)=d140; phi0bc(-1)=derivatives(1).d4 !Neumann
   DO v0bc(0)(i)=~-v0bc(0)(-2)*v0bc(-1)(i)/v0bc(-1)(-2) FOR i= -1 TO 2
   DO eta0bc(0)(i)=~-eta0bc(0)(-2)*eta0bc(-1)(i)/eta0bc(-1)(-2) FOR i= -1 TO 2
-  DO phi0bc(0)(i)=~-phi0bc(0)(-2)*phi0bc(-1)(i)/phi0bc(-1)(-2) FOR i= -1 TO 2
 END IF
 IF last THEN
 ! vnbc(0)=d04n; vnbc(1)=d24n; etanbc(0)=d14n !Boundary layer
   vnbc(0)=d04n; vnbc(1)=d14n; etanbc(0)=d04n
   etanbc(1)=derivatives(ny-1).d4
-  phinbc(0)=d04n; phinbc(1)=derivatives(ny-1).d4 !Dirichlet
-! phinbc(0)=d04n; phinbc(1)=d14n                 !Dirichlet+Neumann
   DO vnbc(0)(i)=~-vnbc(0)(2)*vnbc(1)(i)/vnbc(1)(2) FOR i= -2 TO 1
   DO etanbc(0)(i)=~-etanbc(0)(2)*etanbc(1)(i)/etanbc(1)(2) FOR i= -2 TO 1
-  DO phinbc(0)(i)=~-phinbc(0)(2)*phinbc(1)(i)/phinbc(1)(2) FOR i= -2 TO 1
 END IF
 
 
 ! Boundary conditions
-SUBROUTINE applybc_0(ARRAY(*) OF REAL eq^(*); ARRAY(-1..0,-2..2) OF REAL bc)
+SUBROUTINE applybc_0(ARRAY(*) OF REAL eq^(*); ARRAY(-1..0,-2..2) OF REAL bc) 
   DO eq(1,i)=~-eq(1,-2)*bc(-1,i)/bc(-1,-2) FOR i=-1 TO 2
   DO eq(1,i)=~-eq(1,-1)*bc(0,i)/bc(0,-1) FOR i=0 TO 2
   DO eq(2,i-1)=~-eq(2,-2)*bc(0,i)/bc(0,-1) FOR i=0 TO 2
 END applybc_0
-SUBROUTINE applybc_n(ARRAY(*) OF REAL eq^(*); ARRAY(0..1,-2..2) OF REAL bc)
+SUBROUTINE applybc_n(ARRAY(*) OF REAL eq^(*); ARRAY(0..1,-2..2) OF REAL bc) 
   DO eq(ny-1,i)=~-eq(ny-1,2)*bc(1,i)/bc(1,2) FOR i=-2 TO 1
   DO eq(ny-1,i)=~-eq(ny-1,1)*bc(0,i)/bc(0,1) FOR i=-2 TO 0
   DO eq(ny-2,i+1)=~-eq(ny-2,2)*bc(0,i)/bc(0,1) FOR i=-2 TO 0
@@ -161,17 +164,19 @@ END applybc_n
 
 ! Integral in y direction
 SUBROUTINE yintegr(REAL RESULT^, f(*))
-  LOOP FOR iy=[nyl DIV 2]*2+1 TO nyh BY 2
-   yp1=y(iy+1)-y(iy); ym1=y(iy-1)-y(iy)
+  LOOP FOR iy=[nyl DIV 2]*2+1 TO nyh BY 2 
+   yp1=y(iy+1)-y(iy); ym1=y(iy-1)-y(iy) 
    a1=-1/3*ym1+1/6*yp1+1/6*yp1*yp1/ym1
    a3=+1/3*yp1-1/6*ym1-1/6*ym1*ym1/yp1
    a2=yp1-ym1-a1-a3
-   RESULT=~+a1*f(iy-1) + a2*f(iy) + a3*f(iy+1)
+   RESULT=~+a1*f(iy-1) + a2*f(iy) + a3*f(iy+1)    
   REPEAT
 END yintegr
 
 VELOCITY=STRUCTURE(COMPLEX u,v,w)
 MOMFLUX=STRUCTURE(COMPLEX uu,uv,vv,vw,ww,uw)
+!INLINE FUNCTION OS(INTEGER iy,i)=0.5*[d4(i)-2*k2*d2(i)+k2*k2*d0(i)] !Vittori
+!INLINE FUNCTION SQ(INTEGER iy,i)=0.5*[d2(i)-k2*d0(i)]               !Vittori
 INLINE FUNCTION OS(INTEGER iy,i)=ni*[d4(i)-2*k2*d2(i)+k2*k2*d0(i)]
 INLINE FUNCTION SQ(INTEGER iy,i)=ni*[d2(i)-k2*d0(i)]
 
@@ -192,35 +197,10 @@ SHARED ARRAY(0..nx,-nz..nz,MAX(1,nyl-2)..MIN(ny-1,nyh+2),1..maxtimelevels) OF rh
 SHARED rhstype memrhs(0..nx,-nz..nz,0..2)
 INLINE FUNCTION newrhs(INTEGER ix,iz,iy)=memrhs(ix,iz,(iy+1000)MOD(3))
 INLINE FUNCTION imod(INTEGER iy)=(iy+1000)MOD(5)
-REAL u1zero=0, w1zero=0, phi1zero
-
-#ifdef scalar
-  SFLUX=STRUCTURE(COMPLEX phiu,phiv,phiw)
-  SHARED ARRAY(0..nxd-1,0..nzd-1) OF COMPLEX phid
-  SHARED ARRAY(0..nxd-1,0..nzd-1,0..4) OF SFLUX SVd
-
-  SHARED ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) OF COMPLEX phi
-  SHARED ARRAY(0..nx,-nz..nz,MAX(1,nyl-2)..MIN(ny-1,nyh+2),1..maxtimelevels) OF COMPLEX oldphirhs
-  SHARED COMPLEX memphirhs(0..nx,-nz..nz,0..2)
-  INLINE FUNCTION newphirhs(INTEGER ix,iz,iy)=memphirhs(ix,iz,(iy+1000)MOD(3))
-#endif
+REAL u1zero, w1zero
 
 INTEGER ismp
 
-#ifdef scalar
-POINTER TO STORED STRUCTURE(
-  ARRAY(0..1023) OF CHAR header
-  ARRAY(-1..ny+1,0..nx,-nz..nz) OF VELOCITY Vimage
-  ARRAY(-1..ny+1,0..nx,-nz..nz) OF COMPLEX  phiimage
-  ) diskimage
-POINTER TO STORED STRUCTURE(
-  INTEGER nyimage,nximage,nzimage
-  REAL timage,yminimage,ymaximage,aimage,alfa0image,beta0image,niimage
-  ARRAY(-1..ny+1) OF REAL uavimage,wavimage
-  ARRAY(-1..ny+1,0..nx,-nz..nz) OF VETA fieldimage
-  ARRAY(-1..ny+1,0..nx,-nz..nz) OF COMPLEX  phiimage
-  ) diskfield
-#else
 POINTER TO STORED STRUCTURE(
   ARRAY(0..1023) OF CHAR header
   ARRAY(-1..ny+1,0..nx,-nz..nz) OF VELOCITY Vimage
@@ -231,13 +211,9 @@ POINTER TO STORED STRUCTURE(
   ARRAY(-1..ny+1) OF REAL uavimage,wavimage
   ARRAY(-1..ny+1,0..nx,-nz..nz) OF VETA fieldimage
   ) diskfield
-#endif
 
 INTEGER cont=0,outcont=1000
 FILE time_file; IF has_terminal THEN time_file=CREATE("Runtimedata")
-#ifdef scalar
- FILE scalar_file; IF has_terminal THEN scalar_file=CREATE("Scalardata")
-#endif
 INTEGER miny,maxy
 IF first THEN miny=nyl-2; maxy=nyh   ELSE miny=nyl
 IF last  THEN miny=nyl;   maxy=nyh+2 ELSE maxy=nyh
@@ -245,38 +221,37 @@ IF first AND last THEN miny=nyl-2; maxy=nyh+2
 
 REAL cfl=0,cflm=0
 SUBROUTINE getcfl()
-!nx OPPURE nxd?? Check tesi Ferro
-dx=PI/(alfa0*nxd); dz=2*PI/(beta0*nzd)
-cfl=0
-LOOP FOR iy=nyl TO nyh
-  REAL dy=0.5*(y(iy+1)-y(iy-1))
-  PARALLEL LOOP FOR ismp=0 TO nsmp-1
-    LOOP FOR ix=ismp TO nx BY nsmp
-      Vd(ix,0..nz)=V(ix,0..nz,iy)
-      Vd(ix,nz+1..nzd-nz-1)=0
-      Vd(ix,nzd+(-nz..-1))=V(ix,-nz..-1,iy)
-      WITH Vd(ix,*): IFT(u); IFT(v); IFT(w)
+  dx=PI/(alfa0*nxd); dz=2*PI/(beta0*nzd)
+  cfl=0
+  LOOP FOR iy=nyl TO nyh
+    REAL dy=0.5*(y(iy+1)-y(iy-1))
+    PARALLEL LOOP FOR ismp=0 TO nsmp-1
+      LOOP FOR ix=ismp TO nx BY nsmp
+        Vd(ix,0..nz)=V(ix,0..nz,iy)
+        Vd(ix,nz+1..nzd-nz-1)=0
+        Vd(ix,nzd+(-nz..-1))=V(ix,-nz..-1,iy)
+        WITH Vd(ix,*): IFT(u); IFT(v); IFT(w)
+      REPEAT LOOP
+      IF ismp=0 THEN Vd(nx+1..nxd-1)=0
+      SYNC(ismp,nsmp)
+      DO WITH Vd(*,iz): RFT(u); RFT(v); RFT(w) FOR iz=ismp TO HI BY nsmp
+      SYNC(ismp,nsmp)
     REPEAT LOOP
-    IF ismp=0 THEN Vd(nx+1..nxd-1)=0
-    SYNC(ismp,nsmp)
-    DO WITH Vd(*,iz): RFT(u); RFT(v); RFT(w) FOR iz=ismp TO HI BY nsmp
-    SYNC(ismp,nsmp)
+    ! Un campione ogni due
+    cfl=MAX{cfl,MAXABS[Vd.u.IMAG]/dx+MAXABS[Vd.v.IMAG]/dy+MAXABS[Vd.w.IMAG]/dz}
   REPEAT LOOP
-  ! Un campione ogni due
-  cfl=MAX{cfl,MAXABS[Vd.u.IMAG]/dx+MAXABS[Vd.v.IMAG]/dy+MAXABS[Vd.w.IMAG]/dz}
-REPEAT LOOP
 END getcfl
 
-REAL energy, slice_energy, diss, slice_diss
+REAL energy, slice_energy, diss, slice_diss 
 COMPLEX dudy, dvdy, dwdy
 VETA fieldbuf(0..nx,-nz..nz)
 VELOCITY velbuf(0..nx,-nz..nz)
 SUBROUTINE outstats
-INC outcont;
+INC outcont; 
 IF outcont>0 THEN
-	outcont=0; getcfl(); cflm=0; energy=0; slice_energy=0; diss=0; slice_diss=0
+	outcont=0; cflm=0; getcfl(); energy=0; slice_energy=0; diss=0; slice_diss=0
 
-	DO WITH V(ix,iz,iy):
+	DO WITH V(ix,iz,iy): 
 	slice_energy = ~ + 1/2 * [NORM(u)+NORM(v)+NORM(w)]*[IF ix=0 THEN 1 ELSE 2] *(y(iy+1)-y(iy-1))*0.5 FOR iy=nyl TO nyh AND ALL ix,iz EXCEPT ix=0 AND iz=0
 
 	LOOP FOR iy=nyl TO nyh
@@ -295,37 +270,36 @@ IF outcont>0 THEN
 			slice_diss = ~ + 0.5*[ k2*(NORM(u(iy))+NORM(v(iy))+NORM(w(iy))) + NORM(dudy)+NORM(dvdy)+NORM(dwdy) ] * (y(iy+1)-y(iy-1))*0.5
 		REPEAT
 	REPEAT
-	IF NOT first THEN
-		READ BINARY FROM prev energy, cflm, diss; FLUSH prev
-		energy=~+slice_energy; diss=~+slice_diss; !cflm=MAX(cfl,cflm)
+
+
+	IF NOT first THEN 
+		READ BINARY FROM prev(0) energy, cflm, diss; FLUSH prev(0)
+		energy=~+slice_energy; diss=~+slice_diss; !cflm=MAX(cfl,cflm) 
 		IF cfl > cflm THEN cflm = cfl; END IF
-  	ELSE
+  	ELSE 
 		energy=slice_energy; diss=slice_diss; cflm=cfl
 	END IF
-	IF NOT last THEN WRITE BINARY TO next energy, cflm, diss; FLUSH next
-	IF cflmax>0 THEN
+	IF NOT last THEN WRITE BINARY TO next(0) energy, cflm, diss; FLUSH next(0)
+	IF cflmax>0 THEN 
 		deltat=cflmax/cflm
-		IF NOT last THEN READ BINARY FROM next deltat; FLUSH next
-		IF NOT first THEN WRITE BINARY TO prev deltat; FLUSH prev
+		IF NOT last THEN READ BINARY FROM next(0) deltat; FLUSH next(0)
+		IF NOT first THEN WRITE BINARY TO prev(0) deltat; FLUSH prev(0)
 	END IF
-
 	IF has_terminal THEN
 	  WRITE time:1.9, u1zero:1.9, SUM -d14n(i)*V(0,0,ny-1+i).u.REAL FOR i=-2 TO 2 :1.9,
         	w1zero :1.9, SUM -d14n(i)*V(0,0,ny-1+i).w.REAL FOR i=-2 TO 2 :1.9,
 		flowx,px+corrpx,flowz,pz+corrpz,cflm*deltat,deltat,energy,diss
-	  WRITE TO time_file time:1.9,
+	  WRITE TO time_file time:1.9, 
         	u1zero:1.9, SUM -d14n(i)*V(0,0,ny-1+i).u.REAL FOR i=-2 TO 2 :1.9,
 	        w1zero :1.9, SUM -d14n(i)*V(0,0,ny-1+i).w.REAL FOR i=-2 TO 2 :1.9,
 	        flowx,px+corrpx,flowz,pz+corrpz,cflm*deltat,deltat,energy,diss; FLUSH(time_file)
-#ifdef scalar
-		WRITE TO scalar_file time:1.9, phi1zero, (SUM d14n(i)*phi(0,0,ny-1+i).REAL FOR ALL i); FLUSH(scalar_file)
-#endif
 	END IF
-END IF
 
+END IF
+    	
 IF time>0 AND FLOOR((time+0.5*deltat)/dt_save) > FLOOR((time-0.5*deltat)/dt_save) THEN
   DO WITH V(0,0,iy): u=~-u_conv; w=~-w_conv FOR ALL iy
-  IF NOT first THEN READ FROM prev
+  IF NOT first THEN READ FROM prev(0)
   diskimage = OPEN("Dati.cart.out")
   WITH diskimage
     IF has_terminal THEN
@@ -341,25 +315,22 @@ IF time>0 AND FLOOR((time+0.5*deltat)/dt_save) > FLOOR((time-0.5*deltat)/dt_save
    LOOP FOR iy = miny TO maxy
      DO velbuf(0..nx,iz) = V(0..nx,iz,iy) FOR ALL iz
      Vimage(iy) = velbuf
-#ifdef scalar
-     phiimage(iy) = phi(*,*,iy)
-#endif
    REPEAT LOOP
 
   CLOSE diskimage
-  IF NOT last THEN WRITE TO next
+  IF NOT last THEN WRITE TO next(0)
   DO WITH V(0,0,iy): u=~+u_conv; w=~+w_conv FOR ALL iy
 END IF
-
+    
 IF time>0 AND FLOOR((time+0.5*deltat)/dt_field) > FLOOR((time-0.5*deltat)/dt_field) THEN
   cont=~+1; STRING field_name
   field_name = WRITE("Field"cont".fld")
   DO WITH V(0,0,iy): u=~-u_conv; w=~-w_conv FOR ALL iy
-  IF NOT first THEN READ FROM prev
+  IF NOT first THEN READ FROM prev(0)
   diskfield = OPEN(field_name)
   WITH diskfield
     IF has_terminal THEN
-      WRITE "Writing field_file", cont, "at time", time
+      WRITE "Writing field_file at time", time
       nyimage=ny;nximage=nx;nzimage=nz
       timage=time;yminimage=ymin;ymaximage=ymax
       aimage=a;alfa0image=alfa0;beta0image=beta0;niimage=1/ni
@@ -374,41 +345,40 @@ IF time>0 AND FLOOR((time+0.5*deltat)/dt_field) > FLOOR((time-0.5*deltat)/dt_fie
       eta = ibeta*V(ix,iz,iy).u - ialfa*V(ix,iz,iy).w
      REPEAT LOOP
     fieldimage(iy)=fieldbuf
-#ifdef scalar
-    phiimage(iy)=phi(*,*,iy)
-#endif
     REPEAT LOOP
 
   CLOSE diskfield
-  IF NOT last THEN WRITE TO next
+  IF NOT last THEN WRITE TO next(0)
   DO WITH V(0,0,iy): u=~+u_conv; w=~+w_conv FOR ALL iy
 END IF
 END outstats
-
+    
 SUBROUTINE read_restart_file
 IF restart_file="" THEN
   time=0; V=0
   IF last THEN LOOP FOR iy=HI-10 TO HI
-    DO WITH V(ix,iz,iy): u=0.00001*EXP(RAND()*2*PI*I); v=0.00001*EXP(RAND()*2*PI*I); w=0.00001*EXP(RAND()*2*PI*I) FOR ALL ix,iz
+    DO WITH V(ix,iz,iy): u=0.00075*EXP(RAND()*2*PI*I); v=0.00075*EXP(RAND()*2*PI*I); w=0.00075*EXP(RAND()*2*PI*I) FOR ALL ix,iz
     DO V(0,-iz,iy).u=CONJG(V(0,iz,iy).u);V(0,-iz,iy).v=CONJG(V(0,iz,iy).v);V(0,-iz,iy).w=CONJG(V(0,iz,iy).w) FOR iz=1 TO nz
   REPEAT
-  DO WITH V(0,0,iy): u.REAL=3/4*(1-[1-y(iy)]^2); u.IMAG=0; v=0; w.IMAG=0 FOR iy=V.LO3 TO V.HI3
+  DO WITH V(0,0,iy): u.REAL=3/2*(1-[1-y(iy)]^2); u.IMAG=0; v=0; w.IMAG=0 FOR iy=V.LO3 TO V.HI3
 ELSE
   IF has_terminal THEN WRITE "Reading from restart_file: ", restart_file
   diskimage = OPEN(restart_file); WITH diskimage:
     IF time_from_restart THEN
-      READ BY NAME FROM header ny,nx,nz,alfa0,beta0,ymin,ymax,a,ni,time; ni=1/ni
+      INTEGER nyt,nxt,nzt
+      REAL alfa0t,beta0t,ymint,ymaxt,at,nit
+      nxt=nx; nyt=ny; nzt=nz; alfa0t=alfa0; beta0t=beta0; ymint=ymin; ymaxt=ymax; at=a; nit=ni; 
+      READ BY NAME FROM header ny,nx,nz,alfa0,beta0,ymin,ymax,a,ni,time;
+      nx=nxt; ny=nyt; nz=nzt; alfa0=alfa0t; beta0=beta0t; ymin=ymint; ymax=ymaxt; a=at; ni=nit;
       IF has_terminal THEN WRITE "Starting at non-zero time="time
     END IF
     LOOP FOR iy = nyl-2 TO nyh+2
       V(*,*,iy) = Vimage(iy)
-#ifdef scalar
-    phi(*,*,iy)=phiimage(iy)
-#endif
     REPEAT LOOP
   CLOSE diskimage
 END IF
 DO WITH V(0,0,iy): u=~+u_conv; w=~+w_conv FOR ALL iy
+!DO WITH V(ix,iz,iy): u=~*0.038; v=~*0.038; w=~*0.038 FOR ALL ix,iz,iy
 END read_restart_file
 
 SUBROUTINE simple(COMPLEX rhs^,old^(*),unkn,impl,expl)
@@ -437,8 +407,8 @@ CONSTANT REAL RK2_rai_coeff=120/8
 SUBROUTINE RK3_rai(COMPLEX rhs^,old^(*),unkn,impl,expl)
   rhs=120/(20*deltat)*unkn+impl+90/20*expl-50/20*old(1)
 END RK3_rai
-CONSTANT REAL RK3_rai_coeff=120/20
-
+CONSTANT REAL RK3_rai_coeff=120/20      
+    
 SUBROUTINE RK1_kom(COMPLEX rhs^,old^(*),unkn,impl,expl)
   rhs=1020/240/deltat*unkn+impl+2*expl
   old(1)=expl
@@ -461,3 +431,4 @@ SUBROUTINE RK4_kom(COMPLEX rhs^,old^(*),unkn,impl,expl)
   rhs=1020/(170*deltat)*unkn+impl+9/2*expl-5/2*old(1)
 END RK4_kom
 CONSTANT REAL RK4_kom_coeff=1020/170
+
