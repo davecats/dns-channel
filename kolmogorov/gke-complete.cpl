@@ -7,16 +7,17 @@
 ! This program IS parallel with shared memory support
 
 gamma=0
+!USE rtchecks
 USE ../dnsdata
 USE ../dnsdirect
 USE ../tke/convenience
-!USE rtchecks
 
 ! Parameters
 ! -----------------------------
-nfmin=1001
-nfmax=1001
-dn=1
+nfmin=atoi(COMMANDLINE(4))
+nfmax=atoi(COMMANDLINE(5))
+dn=atoi(COMMANDLINE(6))
+path=COMMANDLINE(7)
 ! -----------------------------
 INTEGER nftot=[(nfmax-nfmin) DIV dn]+1
 ARRAY(-nz..nz) OF INTEGER izdV=0; DO izdV(iz)=IF iz>=0 THEN iz ELSE nzd+iz FOR iz=-nz TO nz
@@ -25,7 +26,7 @@ nxc=(2*nxd) DIV 2; nzc=nzd DIV 2; izd==izdV(iz)
 ! Definitions
 ! -----------------------------
 GKETERMS = STRUCTURE(ARRAY(1..3) OF REAL rTURB, rMEAN, rVISC; REAL cTURB, cPRES, cVISC, scaleENER, scalePROD)
-MEANTERMS = STRUCTURE(REAL U,W,Uy,Wy,Uyy,Wyy) ! uiuj.cpl XXX add pressure in meanterms
+MEANTERMS = STRUCTURE(REAL U,W,Uy,Wy,Uyy,Wyy,P) !uiuj.cpl
 MKETERMS = STRUCTURE(REAL pump,produv,prodvw,ttrsp,vdiff,dissU,dissW,PHIttrsp,PHIvdiff) ! uiuj.cpl
 BALANCE = STRUCTURE(ARRAY(1..6) OF REAL var,prod,psdiss,ttrsp,vdiff,pstrain,ptrsp,PHIttrsp,PHIvdiff,PHIptrsp) ! uiuj.cpl
 
@@ -35,13 +36,14 @@ SHARED ARRAY(-1..ny+1,0..nxc-1,0..nzc-1) OF GKETERMS gke=0
 SHARED ARRAY(1..2,1..2,0..nxd-1,0..nzd-1) OF STRUCTURE(COMPLEX UU,VV,WW,UV,PV,uuu,uuv,uuw,vvu,vvv,vvw,wwu,wwv,www,uvu,uvv,uwu,uww,vwv,vww) R=0
 
 SHARED ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) OF COMPLEX p=0
-POINTER TO ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) OF DERIVS Vder
+SHARED ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) OF DERIVS Vder=0
 
 USE ../energy-box/poisson_solver_parallel
 
 INTEGER startpos(-1..ny DIV 2 +1)=0 
 DO startpos(iy+1)=startpos(iy)+(ny-2*iy+1) FOR iy=-1 TO ny DIV 2
 POINTER TO STORED ARRAY(0..startpos(ny DIV 2 +1)-1,0..nxc-1,0..nzc-1) OF GKETERMS gkedata
+POINTER TO STORED ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) OF COMPLEX pressuredata
 
 ! Load MEANTERMS and BALANCE
 ! ------------------------------
@@ -53,10 +55,10 @@ POINTER TO STORED STRUCTURE[
 uiujimage=OPEN("uiuj.bin"); WITH uiujimage: mean=meandata; uiuj=uiujdata; CLOSE(uiujimage)
 
 #define pR(A,f) A(*,iz).f.REALIFIED(ix)
-#define mR(A,f) A(*,nzd-1-iz).f.REALIFIED(2*nxd-1-ix)
+#define mR(A,f) A(*,IF iz=0 THEN 0 ELSE nzd-iz).f.REALIFIED(IF ix=0 THEN 0 ELSE 2*nxd-ix)
 #define R0(A,f) A(*,0).f.REALIFIED(0)
 ! Open data for output and set everything to zero
-gkedata=OPEN("gke-complete.bin")
+gkedata=OPEN(path)
 IF has_terminal THEN WRITE "Will require " SIZEOF(ARRAY(0..startpos(ny DIV 2 +1)-1,0..nxc-1,0..nzc-1) OF GKETERMS)/(1024.0**3) " GiB on disk..."
 IF has_terminal THEN WRITE "Computing Kolmogorov Equation..."
 
@@ -68,10 +70,13 @@ LOOP files FOR if=nfmin TO nfmax BY dn
         ! Loading data
         STRING field_name = WRITE("Field"if".fld")
         read_field_parallel(field_name)
-        ! Derivatives and pressure
-        NEW Vder; Vder=0; compute_pressure(Vder,p); FREE(Vder)
-        ! Compute fluctuating field (XXX TODO pressure should be put in mean and subtraced here)
-        WITH mean(*),V(0,0,*): u.REAL=~-U; w.REAL=~-W; p(0,0,*)=0
+        ! Pressure field
+        STRING pressure_name = WRITE('pField'if'.fld'); pressuredata=OPEN(pressure_name)
+        p=pressuredata; CLOSE(pressuredata)
+        ! Compute fluctuating field
+        WITH mean(*),V(0,0,*): u.REAL=~-U; w.REAL=~-W; p(0,0,*)=~-P;
+        ! Compute derivatives
+        velocity_gradient(Vder)
         ! Start computation of correlations
         PARALLEL LOOP FOR ismp=0 TO nsmp-1
         LOOP outer FOR iy1=-1 TO ny+1 
@@ -107,7 +112,7 @@ LOOP files FOR if=nfmin TO nfmax BY dn
             SYNC(ismp,nsmp)
         ! Compute GKE terms
 #define Rturb(f,g) ( pR(R(1,2),f) - mR(R(2,1),f) + 2*pR(R(1,2),g) - 2*mR(R(2,1),g) + R0(R(2,2),f) - R0(R(1,1),g) )
-#define Cturb(f,g) ( pR(R(1,2),f) + mR(R(2,1),f) - 2*pR(R(1,2),g) - 2*mR(R(2,1),g) + R0(R(2,2),f) + R0(R(1,1),g) )
+#define Cturb(f,g) ( pR(R(2,1),f) + mR(R(1,2),f) - 2*pR(R(1,2),g) - 2*mR(R(2,1),g) + R0(R(2,2),f) + R0(R(1,1),g) )
 #define Rsum(f)    ( R0(R(2,2),f) + R0(R(1,1),f) -   pR(R(1,2),f) -   mR(R(2,1),f) )
             DO WITH gke(IY2,ix,iz), mean(*), uiuj(*):
               rTURB(1) = ~+     Rturb(uuu,uuu) + Rturb(vvu,uvv) + Rturb(wwu,uww)
@@ -148,41 +153,6 @@ LOOP files FOR if=nfmin TO nfmax BY dn
 REPEAT files
 <*printf("\r                                            \r");*> 
 
-IF has_terminal THEN WRITE "Computing y-derivatives..."
-INLINE FUNCTION gkei(INTEGER i,j)=gkemem(startpos(i)+j-i,iz)
-INLINE FUNCTION gkeiy2(INTEGER i,j)=(IF j<i THEN gkei(j,i) ELSE IF j>ny-i THEN gkei(ny-j,ny-i) ELSE gkei(i,j))
-INLINE FUNCTION gkeiy1(INTEGER i,j)=(IF i>ny DIV 2 THEN gkeiy2(ny-i,ny-j) ELSE gkeiy2(i,j))
-SHARED ARRAY(0..startpos(ny DIV 2 +1)-1,0..nzc-1) OF GKETERMS gkemem=0
-! Derive final terms
-! ------------------------------- 
-LOOP derivatives FOR ix=0 TO nxc-1
-        INTEGER waitbar=100*(ix)DIV(nxc-1); <*printf("\r %d %% completed          ",waitbar_); fflush(stdout);*>
-        gkemem=gkedata(*,ix,*)
-        PARALLEL LOOP FOR ismp=0 TO nsmp-1
-        LOOP FOR iz=ismp*nzc DIV nsmp TO (ismp+1)*nzc DIV nsmp -1
-          ! y2-derivatives
-          LOOP FOR IY1=-1 TO ny DIV 2
-            LOOP FOR IY2=IY1 TO ny-IY1  
-              j=[IF IY2=-1 THEN 2 ELSE IF IY2=0 THEN 1 ELSE IF IY2=ny THEN -1 ELSE IF IY2=ny+1 THEN -2 ELSE 0]
-              WITH derivs_standalone(IY2), gkei(IY1,IY2):
-                cVISC   =~-[SUM 0.5*ni*d1(i)*gkeiy2(IY1,IY2+i+j).scaleENER FOR i=-2 TO 2]
-                rVISC(2)=~-[SUM ni*d1(i)*gkeiy2(IY1,IY2+i+j).scaleENER FOR i=-2 TO 2]
-                rMEAN(2)=~+[SUM 0.5*d1(i)*gkeiy2(IY1,IY2+i+j).rTURB(2) - 0.5*ni*d2(i)*gkeiy2(IY1,IY2+i+j).scaleENER FOR i=-2 TO 2]
-            REPEAT
-          REPEAT
-          ! y1-derivatives
-          LOOP FOR IY1=-1 TO ny DIV 2
-            j=[IF IY1=-1 THEN 2 ELSE IF IY1=0 THEN 1 ELSE IF IY1=ny THEN -1 ELSE IF IY1=ny+1 THEN -2 ELSE 0]
-            LOOP FOR IY2=IY1 TO ny-IY1 
-              WITH derivs_standalone(IY1), gkei(IY1,IY2): 
-                rMEAN(2)=~+[SUM d1(i)*(gkeiy1(IY1+i+j,IY2).rVISC(2)-0.5*gkeiy1(IY1+i+j,IY2).rTURB(2))-0.5*ni*d2(i)*gkeiy1(IY1+i+j,IY2).scaleENER FOR i=-2 TO 2]
-                cVISC   =~-[SUM 0.5*ni*d1(i)*gkeiy1(IY1+i+j,IY2).scaleENER FOR i=-2 TO 2]
-                rVISC(2)=~+[SUM ni*d1(i)*gkeiy1(IY1+i+j,IY2).scaleENER FOR i=-2 TO 2]
-            REPEAT
-          REPEAT
-        REPEAT
-        REPEAT
-        gkedata(*,ix,*)=gkemem
-REPEAT derivatives
-<*printf("\r                                            \r");*> 
 CLOSE(gkedata)
+!derivative on python interface
+
