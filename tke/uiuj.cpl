@@ -51,7 +51,7 @@ USE convenience
 
 ! Parameters
 ! -----------------------------
-nfmin=1; nfmax=9901; dn=100
+nfmin=1; nfmax=2352; dn=1
 !------------------------------
 nftot=[(nfmax-nfmin) DIV dn]+1
 
@@ -59,12 +59,13 @@ nftot=[(nfmax-nfmin) DIV dn]+1
 ! ------------------------------------
 #define cprod(f,g,h) h.REAL=f.REAL*g.REAL; h.IMAG=f.IMAG*g.IMAG
 #define cprod3(f,g,k,h) h.REAL=f.REAL*g.REAL*k.REAL; h.IMAG=f.IMAG*g.IMAG*k.IMAG
-MEANTERMS = STRUCTURE(REAL U,W,Uy,Wy,Uyy,Wyy)
+MEANTERMS = STRUCTURE(REAL U,W,Uy,Wy,Uyy,Wyy,P)
 MKETERMS = STRUCTURE(REAL pump,produv,prodvw,ttrsp,vdiff,dissU,dissW,PHIttrsp,PHIvdiff)
 BALANCE = STRUCTURE(ARRAY(1..6) OF REAL var,prod,psdiss,ttrsp,vdiff,pstrain,ptrsp,PHIttrsp,PHIvdiff,PHIptrsp)
 
 SHARED ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) OF COMPLEX pressure=0
 SHARED ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) OF DERIVS Vder=0
+POINTER TO STORED ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) OF COMPLEX pressuredata
 
 SHARED ARRAY(0..nxd-1,0..nzd-1) OF DERIVS Vderd=0
 SHARED ARRAY(0..nxd-1,0..nzd-1) OF DERPRODSEXT VVderd=0
@@ -80,15 +81,19 @@ USE ../energy-box/poisson_solver_parallel
 ! ------------------------------------
 LOOP files FOR n=nfmin TO nfmax BY dn
   IF NOT first THEN READ FROM prev
-    STRING field_name = WRITE('Field'n'.fld')
-    diskfield=OPEN(field_name)
-    WITH diskfield,mean(*):
-      U=~+uavimage(nyl-2..nyh+2)
-      W=~+wavimage(nyl-2..nyh+2)
-    CLOSE diskfield
+  STRING field_name = WRITE('Field'n'.fld')
+  STRING pressure_name = WRITE('pField'n'.fld')
+  diskfield=OPEN(field_name); pressuredata=OPEN(pressure_name)
+  WITH diskfield,mean(*):
+    U=~+uavimage(nyl-2..nyh+2); W=~+wavimage(nyl-2..nyh+2)
+    P=~+pressuredata(0,0,nyl-2..nyh+2).REAL
+  CLOSE(diskfield); CLOSE(pressuredata)
   IF NOT last THEN WRITE TO next
 REPEAT files
-WITH mean: U=~/nftot; W=~/nftot
+WITH mean: U=~/nftot; W=~/nftot; P=~/nftot
+WITH mean:  deriv(U, Uy);  LeftLUDivStep2(Uy,  D0mat); deriv(W, Wy);   LeftLUDivStep2(Wy, D0mat)
+WITH mean: deriv2(U, Uyy); LeftLUDivStep2(Uyy, D0mat) deriv2(W, Wyy); LeftLUDivStep2(Wyy, D0mat)
+     
 
 ! Compute the TKE budget
 ! ------------------------------------
@@ -97,9 +102,12 @@ LOOP fields FOR n=nfmin TO nfmax BY dn
   STRING field_name = WRITE('Field'n'.fld')
   read_field_parallel(field_name)
   ! Pressure field
-  compute_pressure(Vder,pressure);
+  STRING pressure_name = WRITE('pField'n'.fld'); pressuredata=OPEN(pressure_name)
+  pressure=pressuredata; CLOSE(pressuredata)
   ! Compute fluctuating field
-  WITH mean(*),V(0,0,*),Vder(0,0,*): u.REAL=~-U; w.REAL=~-W; uy.REAL=~-Uy; wy=~-Wy; pressure(0,0,*)=0;
+  WITH mean(*),V(0,0,*),Vder(0,0,*): u.REAL=~-U; w.REAL=~-W; pressure(0,0,*)=~-P;
+  ! Compute derivatives
+  velocity_gradient(Vder)
   ! Parseval theorem method for var and pstrain
   LOOP FOR iy=nyl-2 TO nyh+2 WITH uiuj(iy):
     LOOP FOR ALL ix,iz WITH V(ix,iz,iy),Vder(ix,iz,iy):
@@ -151,11 +159,6 @@ LOOP fields FOR n=nfmin TO nfmax BY dn
   REPEAT LOOP
   REPEAT LOOP
 REPEAT fields
-! Mean derivatives (Uy,Wy,Uyy,Wyy)
-WITH mean: deriv(U, Uy);     LeftLUDivStep2(Uy, D0mat)
-WITH mean: deriv(W, Wy);     LeftLUDivStep2(Wy, D0mat)
-WITH mean: deriv2(U, Uyy);   LeftLUDivStep2(Uyy, D0mat)
-WITH mean: deriv2(W, Wyy);   LeftLUDivStep2(Wyy, D0mat)
 ! var,PHIttrsp,psdiss,pstrain
 DO WITH uiuj(iy): var(i)=~/nftot; PHIptrsp(i)=~/nftot; PHIttrsp(i)=~/nftot; psdiss(i)=~/nftot; pstrain(i)=~/nftot FOR ALL i,iy
 ! PHIvdiff, vdiff
