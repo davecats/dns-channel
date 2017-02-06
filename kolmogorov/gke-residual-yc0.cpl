@@ -1,0 +1,119 @@
+! 
+! This program computes:
+! 
+! * the residual of the GKE in the (rx,rz,Yc) plane, but for ry=0 
+! * d(phiR.yy)/dry needed for the computation of the extended source
+! 
+! This program is *NOT* parallel, but could easily be parallelized
+! 
+
+gamma=0
+!USE rtchecks
+USE ../../dnsdata
+USE ../../dnsdirect
+USE ../../tke/convenience
+WRITE BY NAME nxd,nzd
+
+! Parameters
+! -----------------------------
+in_path=COMMANDLINE(4)
+! -----------------------------
+nxc=2*nxd; nzc=nzd; izd==izdV(iz)
+dx=PI/(alfa0*nxd); dz=2*PI/(beta0*nzd)
+
+! Definitions
+! -----------------------------
+GKETERMS = STRUCTURE(ARRAY(1..3) OF REAL phiR; REAL phic, scaleENER, scalePROD)
+
+POINTER TO STORED ARRAY(-1..ny+1,-1..ny+1,0..nxc-1,0..nzc-1) OF GKETERMS gkedata=OPENRO(in_path)
+
+SHARED ARRAY(-1..ny+1,0..nxc-1,0..nzc-1) OF REAL phiRx=0,phiRz=0,phiRy=0,phiC=0,source=0
+SHARED ARRAY(-1..ny+1,0..nxc-1,0..nzc-1) OF REAL dphiRy=0,dphiRx=0,dphiRz=0,dphiC=0,residual=0
+
+
+! Compute dphiRy/dry 
+! -------------------------------
+IF has_terminal THEN WRITE "Computing y-derivatives..."
+SHARED ARRAY(-1..ny+1,-1..ny+1,0..nzc-1) OF GKETERMS gkemem=0
+SHARED ARRAY(-1..ny+1) OF REAL dy1phiRy=0,dy2phiRy=0
+! Derivative
+! -------------------------------
+LOOP derivatives FOR ix=0 TO nxc-1
+        INTEGER waitbar=100*(ix)DIV(nxc-1); <*printf("\r %d %% completed          ",waitbar_); fflush(stdout);*>
+        gkemem=gkedata(*,*,ix,*)
+        LOOP FOR iz=0 TO nzc-1
+          LOOP FOR iy=-1 TO ny+1
+            deriv(gkemem(iy,*,iz).phiR(*,2),dy2phiRy); LeftLUDivStep2(dy2phiRy,D0mat)
+            dphiRy(iy,ix,iz) = ~+0.5*dy2phiRy(iy)
+            deriv(gkemem(*,iy,iz).phiR(*,2),dy1phiRy); LeftLUDivStep2(dy1phiRy,D0mat)
+            dphiRy(iy,ix,iz) = ~-0.5*dy1phiRy(iy)
+          REPEAT
+        REPEAT
+REPEAT derivatives
+<*printf("\r                                            \r");*> 
+
+
+! Extract gke data into memory
+! -----------------------------
+LOOP FOR iy=-1 TO ny+1
+  DO WITH gkedata(iy,iy,ix,iz):
+    phiRx(iy,ix,iz) = phiR(1)
+    phiRy(iy,ix,iz) = phiR(2)
+    phiRz(iy,ix,iz) = phiR(3)
+    phiC(iy,ix,iz)  = phic
+    source(iy,ix,iz) = scalePROD
+  FOR ix=0 TO nxc-1 AND iz=0 TO nzc-1
+REPEAT
+CLOSE(gkedata)
+
+! Compute dphiC/dYc
+! -----------------------------
+DO deriv(phiC(*,ix,iz),dphiC(*,ix,iz)); LeftLUDivStep2(dphiC(*,ix,iz),D0mat) FOR ALL ix,iz
+
+! Compute dphiRx/drx (with central FD)
+! -----------------------------
+dphiRx(*,(1..nxc-2),*) = [phiRx(*,(1..nxc-2)+1,*)-phiRx(*,(1..nxc-2)-1,*)]/(2*dx)
+dphiRx(*,0,*) = [phiRx(*,1,*)-phiRx(*,0,*)]/dx
+dphiRx(*,nxc-1,*) = [phiRx(*,nxc-1,*)-phiRx(*,nxc-2,*)]/dx
+
+! Compute dphiRz/drz (with central FD)
+! -----------------------------
+dphiRz(*,*,(1..nzc-2)) = [phiRz(*,*,(1..nzc-2)+1)-phiRz(*,*,(1..nzc-2)-1)]/(2*dz)
+dphiRz(*,*,0) = [phiRz(*,*,1)-phiRz(*,*,0)]/dz
+dphiRz(*,*,nzc-1) = [phiRz(*,*,nzc-1)-phiRz(*,*,nzc-2)]/dz
+
+! Compute residual
+! -----------------------------
+residual = source-dphiRy-dphiRx-dphiRz-dphiC
+
+! Write out
+! -----------------------------
+FILE outdata
+
+outdata = CREATE('source.bin')
+WRITE BINARY TO outdata source
+CLOSE(outdata)
+
+outdata = CREATE('residual.bin')
+WRITE BINARY TO outdata residual
+CLOSE(outdata)
+
+outdata = CREATE('phiry.bin')
+WRITE BINARY TO outdata phiRy
+CLOSE(outdata)
+
+outdata = CREATE('dphiry.bin')
+WRITE BINARY TO outdata dphiRy
+CLOSE(outdata)
+
+outdata = CREATE('dphiC.bin')
+WRITE BINARY TO outdata dphiC
+CLOSE(outdata)
+
+outdata = CREATE('dphirx.bin')
+WRITE BINARY TO outdata dphiRx
+CLOSE(outdata)
+
+outdata = CREATE('dphirz.bin')
+WRITE BINARY TO outdata dphiRz
+CLOSE(outdata)
