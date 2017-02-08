@@ -9,7 +9,7 @@ nx=14; nxc=48;
 nz=14; nzc=48;
 beta0=8.9760;
 alfa0=4;
-file = '/run/media/davide/812f81ed-fed2-4bb6-af2d-2b64759fb87f/kolmo-mfu/gke.bin';
+file = '/home/davide/Desktop/no-symm/gke.bin';
 
 % Memory map to gke data (this may fail if data is too big)
 gkedata = memmapfile(file, 'Format', {'double', [6,nzc,nxc,ny+3,ny+3], 'gke'});

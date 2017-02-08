@@ -1,0 +1,193 @@
+! 
+! Computes the source term, space and scale flux
+! in the generalized Kolmogorov equation specialized
+! for channel flow, as in Marati, Casciola, Piva, JFM 2004,
+! equation 3.4 and following definitions.
+! 
+! This program IS parallel with shared memory support
+!  
+
+gamma=0
+!USE rtchecks
+USE ../../dnsdata
+USE ../../dnsdirect
+USE ../../tke/convenience
+
+! Parameters
+! -----------------------------
+nfmin=atoi(COMMANDLINE(4))
+nfmax=atoi(COMMANDLINE(5))
+dn=atoi(COMMANDLINE(6))
+path=COMMANDLINE(7)
+! -----------------------------
+INTEGER nftot=[(nfmax-nfmin) DIV dn]+1
+ARRAY(-nz..nz) OF INTEGER izdV=0; DO izdV(iz)=IF iz>=0 THEN iz ELSE nzd+iz FOR iz=-nz TO nz
+nxc=(2*nxd); nzc=nzd; izd==izdV(iz)
+
+! Definitions
+! -----------------------------
+GKETERMS = STRUCTURE(ARRAY(1..3) OF REAL phiR; REAL phiC, scaleENER, scalePROD)
+MEANTERMS = STRUCTURE(REAL U,W,Uy,Wy,Uyy,Wyy,P) !uiuj.cpl
+MKETERMS = STRUCTURE(REAL pump,produv,prodvw,ttrsp,vdiff,dissU,dissW,PHIttrsp,PHIvdiff) ! uiuj.cpl
+BALANCE = STRUCTURE(ARRAY(1..6) OF REAL var,prod,psdiss,ttrsp,vdiff,pstrain,ptrsp,PHIttrsp,PHIvdiff,PHIptrsp) ! uiuj.cpl
+
+SHARED ARRAY(-1..ny+1) OF MEANTERMS mean
+SHARED ARRAY(-1..ny+1) OF BALANCE uiuj
+SHARED ARRAY(-1..ny+1,0..nxc-1,0..nzc-1) OF GKETERMS gke=0
+SHARED ARRAY(1..2,1..2,0..nxd-1,0..nzd-1) OF STRUCTURE(COMPLEX UU,VV,WW,UV,PV,uuu,uuv,uuw,vvu,vvv,vvw,wwu,wwv,www,uvu,uvv,uwu,uww,vwv,vww) R=0
+
+SHARED ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) OF COMPLEX p=0
+
+INTEGER startpos(-1..ny DIV 2 +1)=0
+DO startpos(iy+1)=startpos(iy)+(ny-2*iy+1) FOR iy=-1 TO ny DIV 2
+POINTER TO STORED ARRAY(0..startpos(ny DIV 2 +1)-1,0..nxc-1,0..nzc-1) OF GKETERMS gkedata
+POINTER TO STORED ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) OF COMPLEX pressuredata
+
+! Load MEANTERMS and BALANCE
+! ------------------------------
+POINTER TO STORED STRUCTURE[
+        ARRAY(-1..ny+1) OF MEANTERMS meandata
+        ARRAY(-1..ny+1) OF MKETERMS mkedata
+        ARRAY(-1..ny+1) OF BALANCE uiujdata
+] uiujimage
+uiujimage=OPEN("uiuj.bin"); WITH uiujimage: mean=meandata; uiuj=uiujdata; CLOSE(uiujimage)
+
+#define pR(A,f) A(*,iz).f.REALIFIED(ix)
+#define mR(A,f) A(*,(nzd-iz) MOD nzd).f.REALIFIED((2*nxd-ix) MOD (2*nxd))
+#define R0(A,f) A(*,0).f.REALIFIED(0)
+! Open data for output and set everything to zero
+gkedata=OPEN(path)
+IF has_terminal THEN WRITE "Will require " SIZEOF(ARRAY(0..startpos(ny DIV 2 +1)-1,0..nxc-1,0..nzc-1) OF GKETERMS)/(1024.0**3) " GiB on disk..."
+IF has_terminal THEN WRITE "Computing Kolmogorov Equation..."
+
+! Compute Kolmogorov Equation
+! -------------------------------
+LOOP files FOR if=nfmin TO nfmax BY dn
+        ! Cleaning stdout
+        IF if>nfmin THEN <*printf("\r                                            \r");*> END IF
+        ! Loading data
+        STRING field_name = WRITE("Field"if".fld")
+        read_field_parallel(field_name)
+        ! Pressure field
+        STRING pressure_name = WRITE('pField'if'.fld'); pressuredata=OPEN(pressure_name)
+        p=pressuredata; CLOSE(pressuredata)
+        ! Compute fluctuating field
+        WITH mean(*),V(0,0,*): u.REAL=~-U; w.REAL=~-W; p(0,0,*)=~-P;
+        ! Start computation of correlations
+        PARALLEL LOOP FOR ismp=0 TO nsmp-1
+        LOOP outer FOR iy1=-1 TO ny+1  
+        ! Symmetry-aware heler variable 
+          IY1 = IF iy1>ny DIV 2 THEN ny-iy1 ELSE iy1; sig = IF iy1>ny DIV 2 THEN -1 ELSE 1; c = IF iy1=ny DIV 2 THEN 1 ELSE 0.5
+        ! Output progress
+          IF ismp=0 THEN INTEGER waitbar=100*(iy1+1)DIV(ny+1); <*printf("\r %d %% completed          ",waitbar_); fflush(stdout);*>
+        ! Reload data for this iy1, need for averaging "on disk"
+          IF ismp=0 THEN IF if>nfmin OR iy1>ny DIV 2 THEN  gke(IY1+(0..ny-2*IY1),*,*)=gkedata(startpos(IY1)+(0..ny-2*IY1),*,*) ELSE gke(IY1+(0..ny-2*IY1),*,*)=0; END IF
+          SYNC(ismp,nsmp)
+        ! Compute pseudo-spectral correlations
+          convolutions(V(*,*,iy1),VVd(*,*,1))
+          LOOP inner FOR IY2=IY1 TO ny-IY1
+            iy2 = IF iy1>ny DIV 2 THEN ny-IY2 ELSE IY2
+            convolutions(V(*,*,iy2),VVd(*,*,2));
+            LOOP FOR i1=1 TO 2 AND i2=1 TO 2
+              j1=IF i1=1 THEN iy1 ELSE iy2; j2=IF i2=1 THEN iy1 ELSE iy2
+              LOOP FOR ix=ismp*(nx+1) DIV nsmp TO (ismp+1)*(nx+1) DIV nsmp -1
+                R(i1,i2,ix,nz+1..nzd-nz-1)=0
+                DO WITH V(ix,iz,*), VVd(ix,izd,*), R(i1,i2,ix,izd):
+                  UU=u(j1)|u(j2);   VV=v(j1)|v(j2);   WW=w(j1)|w(j2);   UV=u(j1)|v(j2);   PV=p(ix,iz,j1)|v(j2);
+                  uuu=uu(i1)|u(j2); uuv=uu(i1)|v(j2); uuw=uu(i1)|w(j2); vvu=vv(i1)|u(j2); vvv=vv(i1)|v(j2); vvw=vv(i1)|w(j2);
+                  wwu=ww(i1)|u(j2); wwv=ww(i1)|v(j2); www=ww(i1)|w(j2); uvu=uv(i1)|u(j2); uvv=uv(i1)|v(j2); uwu=uw(i1)|u(j2);
+                  uww=uw(i1)|w(j2); vwv=vw(i1)|v(j2); vww=vw(i1)|w(j2);
+                FOR iz=-nz TO nz
+                WITH R(i1,i2,ix,*):  INLINE LOOP FOR iii IN (UU,VV,WW,UV,PV,uuu,uuv,uuw,vvu,vvv,vvw,wwu,wwv,www,uvu,uvv,uwu,uww,vwv,vww); IFT(iii); REPEAT
+              REPEAT LOOP
+              IF ismp=0 THEN R(i1,i2,nx+1..nxd-1)=0
+              SYNC(ismp,nsmp)
+              DO WITH R(i1,i2,*,iz): 
+                INLINE LOOP FOR iii IN (UU,VV,WW,UV,PV,uuu,uuv,uuw,vvu,vvv,vvw,wwu,wwv,www,uvu,uvv,uwu,uww,vwv,vww); RFT(iii); REPEAT
+              FOR iz=ismp*nzd DIV nsmp TO (ismp+1)*nzd DIV nsmp -1
+            REPEAT
+            SYNC(ismp,nsmp)
+        ! Compute GKE terms
+#define Rturb(f,g) ( pR(R(1,2),f) - mR(R(2,1),f) + 2*pR(R(1,2),g) - 2*mR(R(2,1),g) + R0(R(2,2),f) - R0(R(1,1),f) )
+#define Cturb(f,g) ( pR(R(1,2),f) + mR(R(2,1),f) - 2*pR(R(1,2),g) - 2*mR(R(2,1),g) + R0(R(2,2),f) + R0(R(1,1),f) )
+#define Rsum(f)    ( R0(R(2,2),f) + R0(R(1,1),f) -   pR(R(1,2),f) -   mR(R(2,1),f) )
+#define Ravg(f)    ( R0(R(2,2),f) + R0(R(1,1),f) -   pR(R(1,2),f) +   mR(R(2,1),f) )
+            DO WITH gke(IY2,ix,iz), mean(*), uiuj(*):
+              phiR(1) = ~+     Rturb(uuu,uuu) + Rturb(vvu,uvv) + Rturb(wwu,uww)
+              phiR(2) = ~+sig*[Rturb(uuv,uvu) + Rturb(vvv,vvv) + Rturb(wwv,vww)]
+              phiR(3) = ~+     Rturb(uuw,uwu) + Rturb(vvw,vwv) + Rturb(www,www)
+              iscaleENER = Rsum(UU)+Rsum(VV)+Rsum(WW); scaleENER = ~+iscaleENER
+              phiR(1) = ~+iscaleENER*[ U(iy2)-U(iy1) ]; phiR(2) = ~+0; phiR(3) = ~+iscaleENER*[ W(iy2)-W(iy1) ]
+              phiC = ~+0.5*sig*[ Cturb(uuv,uvu)+Cturb(vvv,vvv)+Cturb(wwv,vww) ]; phiC = ~+2*sig*[ Rsum(PV) ]
+              scalePROD = ~-[ Rsum(UV) ]*[Uy(iy1)+Uy(iy2)]-[ Ravg(UV) ]*[Uy(iy2)-Uy(iy1)]-[SUM psdiss(iy1,i)+psdiss(iy2,i) FOR i=1 TO 3]
+            FOR ix=ismp*nxc DIV nsmp TO (ismp+1)*nxc DIV nsmp -1 AND iz=0 TO nzc-1
+        ! phiR.rVISC.(xx,zz) requires derivatives in homogeneous directions of scaleENER
+            DO 
+              DO Vd(*,iz).v.REALIFIED(ix)=Rsum(UU)+Rsum(VV)+Rsum(WW) FOR ix=0 TO 2*nxd-1 
+              WITH Vd(*,iz): HFT(v)
+            FOR iz=ismp*nzd DIV nsmp TO (ismp+1)*nzd DIV nsmp -1
+            SYNC(ismp,nsmp)
+            DO
+              WITH Vd(ix,*): FFT(v)
+              Vd(ix,nz+1..nzd-nz-1)=0; DO WITH Vd(ix,izd): u=I*alfa0*ix*v;  w=I*beta0*iz*v FOR iz=-nz TO nz 
+              WITH Vd(ix,*): IFT(u); IFT(w)
+            FOR ix=ismp*(nx+1) DIV nsmp TO (ismp+1)*(nx+1) DIV nsmp -1
+            IF ismp=0 THEN Vd(nx+1..nxd-1)=0
+            SYNC(ismp,nsmp)
+            DO WITH Vd(*,iz): RFT(u); RFT(w) FOR iz=ismp*nzd DIV nsmp TO (ismp+1)*nzd DIV nsmp -1
+            SYNC(ismp,nsmp)
+            DO 
+              DO WITH gke(IY2,ix,iz): phiR(1) = ~-2*ni*Vd(*,iz).u.REALIFIED(ix); phiR(3) = ~-2*ni*Vd(*,iz).w.REALIFIED(ix) FOR iz=0 TO nzc-1
+            FOR ix=ismp*nxc DIV nsmp TO (ismp+1)*nxc DIV nsmp -1
+            SYNC(ismp,nsmp)
+          REPEAT inner
+        ! Average on disk
+          IF ismp=0 THEN
+            IF if=nfmax AND iy1>=ny DIV 2 THEN WITH gke(IY1+(0..ny-2*IY1),*,*):INLINE LOOP FOR i IN (phiR,phiC,scaleENER,scalePROD) i=~*c/nftot;REPEAT
+            gkedata(startpos(IY1)+(0..ny-2*IY1),*,*)=gke(IY1+(0..ny-2*IY1),*,*)
+          END IF
+        REPEAT outer
+        REPEAT
+REPEAT files
+<*printf("\r                                            \r");*> 
+
+! Compute Derivatives
+! -------------------------------
+IF has_terminal THEN WRITE "Computing y-derivatives..."
+SHARED ARRAY(0..startpos(ny DIV 2 +1)-1,0..nzc-1) OF GKETERMS gkemem=0
+INLINE FUNCTION indx(INTEGER i,j)=startpos(i)+j-i
+INLINE FUNCTION gkeP(INTEGER i,j)=gkedata(indx(i,j),ix,iz)
+INLINE FUNCTION gkeM(INTEGER i,j)=gkedata(indx(i,j),(2*nxd-ix) MOD (2*nxd),(nzd-iz) MOD nzd)
+! Symmetry-aware helper functions to get correct indices
+INLINE FUNCTION gkeiy2(INTEGER i,j)=(IF j<i THEN gkeM(j,i) ELSE IF j>ny-i THEN gkeM(ny-j,ny-i) ELSE gkeP(i,j))
+INLINE FUNCTION gkeiy1(INTEGER i,j)=(IF i>ny DIV 2 THEN gkeiy2(j,i) ELSE gkeiy2(i,j))
+! Derive final terms
+! -------------------------------
+LOOP derivatives FOR ix=0 TO nxc-1
+        INTEGER waitbar=(100*ix)DIV(nxc-1); <*printf("\r %d %% completed          ",waitbar_); fflush(stdout);*>
+        gkemem=gkedata(*,ix,*)
+        LOOP FOR iz=0 TO nxc-1
+          ! y2-derivatives
+          LOOP FOR IY1=-1 TO ny DIV 2
+            LOOP FOR IY2=IY1 TO ny-IY1
+              j=[IF IY2=-1 THEN 2 ELSE IF IY2=0 THEN 1 ELSE IF IY2=ny THEN -1 ELSE IF IY2=ny+1 THEN -2 ELSE 0]
+              WITH derivs_standalone(IY2):
+                gkemem(indx(IY1,IY2),iz).phiC    =~-[SUM 0.5*ni*d1(i)*gkeiy2(IY1,IY2+i+j).scaleENER FOR i=-2 TO 2]
+                gkemem(indx(IY1,IY2),iz).phiR(2) =~-[SUM     ni*d1(i)*gkeiy2(IY1,IY2+i+j).scaleENER FOR i=-2 TO 2]
+            REPEAT
+          REPEAT
+          ! y1-derivatives
+          LOOP FOR IY1=-1 TO ny DIV 2
+            j=[IF IY1=-1 THEN 2 ELSE IF IY1=0 THEN 1 ELSE IF IY1=ny THEN -1 ELSE IF IY1=ny+1 THEN -2 ELSE 0]
+            LOOP FOR IY2=IY1 TO ny-IY1
+              WITH derivs_standalone(IY1):
+                gkemem(indx(IY1,IY2),iz).phiC    =~-[SUM 0.5*ni*d1(i)*gkeiy1(IY1+i+j,IY2).scaleENER FOR i=-2 TO 2]
+                gkemem(indx(IY1,IY2),iz).phiR(2) =~+[SUM     ni*d1(i)*gkeiy1(IY1+i+j,IY2).scaleENER FOR i=-2 TO 2]
+            REPEAT
+          REPEAT
+        REPEAT
+        gkedata(*,ix,*) = gkemem(*,*)
+REPEAT derivatives
+<*printf("\r                                            \r");*>
+CLOSE(gkedata)
+

@@ -27,7 +27,7 @@ GKETERMS = STRUCTURE(ARRAY(1..3) OF REAL phiR; REAL phic, scaleENER, scalePROD)
 
 POINTER TO STORED ARRAY(-1..ny+1,-1..ny+1,0..nxc-1,0..nzc-1) OF GKETERMS gkedata=OPENRO(in_path)
 
-SHARED ARRAY(-1..ny+1,0..nxc-1,0..nzc-1) OF REAL phiRx=0,phiRz=0,phiRy=0,phiC=0,source=0
+SHARED ARRAY(-1..ny+1,0..nxc-1,0..nzc-1) OF REAL phiRx=0,phiRz=0,phiRy=0,phiC=0,source=0,ener=0
 SHARED ARRAY(-1..ny+1,0..nxc-1,0..nzc-1) OF REAL dphiRy=0,dphiRx=0,dphiRz=0,dphiC=0,residual=0
 
 
@@ -43,10 +43,16 @@ LOOP derivatives FOR ix=0 TO nxc-1
         gkemem=gkedata(*,*,ix,*)
         LOOP FOR iz=0 TO nzc-1
           LOOP FOR iy=-1 TO ny+1
+            j=[IF iy=-1 THEN 2 ELSE IF iy=0 THEN 1 ELSE IF iy=ny THEN -1 ELSE IF iy=ny+1 THEN -2 ELSE 0]
+            WITH derivs_standalone(iy):
+              dphiRy(iy,ix,iz) = ~+0.5*[SUM d1(i)*gkemem(iy,iy+i+j,iz).phiR(2) FOR i=-2 TO 2]
+              dphiRy(iy,ix,iz) = ~-0.5*[SUM d1(i)*gkemem(iy+i+j,iy,iz).phiR(2) FOR i=-2 TO 2]
+!(
             deriv(gkemem(iy,*,iz).phiR(*,2),dy2phiRy); LeftLUDivStep2(dy2phiRy,D0mat)
             dphiRy(iy,ix,iz) = ~+0.5*dy2phiRy(iy)
             deriv(gkemem(*,iy,iz).phiR(*,2),dy1phiRy); LeftLUDivStep2(dy1phiRy,D0mat)
             dphiRy(iy,ix,iz) = ~-0.5*dy1phiRy(iy)
+!)
           REPEAT
         REPEAT
 REPEAT derivatives
@@ -62,6 +68,7 @@ LOOP FOR iy=-1 TO ny+1
     phiRz(iy,ix,iz) = phiR(3)
     phiC(iy,ix,iz)  = phic
     source(iy,ix,iz) = scalePROD
+    ener(iy,ix,iz) = scaleENER
   FOR ix=0 TO nxc-1 AND iz=0 TO nzc-1
 REPEAT
 CLOSE(gkedata)
@@ -94,6 +101,10 @@ outdata = CREATE('source.bin')
 WRITE BINARY TO outdata source
 CLOSE(outdata)
 
+outdata = CREATE('energy.bin')
+WRITE BINARY TO outdata ener
+CLOSE(outdata)
+
 outdata = CREATE('residual.bin')
 WRITE BINARY TO outdata residual
 CLOSE(outdata)
@@ -104,6 +115,10 @@ CLOSE(outdata)
 
 outdata = CREATE('dphiry.bin')
 WRITE BINARY TO outdata dphiRy
+CLOSE(outdata)
+
+outdata = CREATE('phiC.bin')
+WRITE BINARY TO outdata phiC
 CLOSE(outdata)
 
 outdata = CREATE('dphiC.bin')

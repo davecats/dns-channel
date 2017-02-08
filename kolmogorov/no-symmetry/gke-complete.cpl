@@ -150,6 +150,37 @@ REPEAT files
 ! -------------------------------
 IF has_terminal THEN WRITE "Computing y-derivatives..."
 SHARED ARRAY(-1..ny+1,-1..ny+1,0..nzc-1) OF GKETERMS gkemem=0
+! Derive final terms
+! -------------------------------
+LOOP derivatives FOR ix=0 TO nxc-1
+        INTEGER waitbar=100*(ix)DIV(nxc-1); <*printf("\r %d %% completed          ",waitbar_); fflush(stdout);*>
+        gkemem=gkedata(*,*,ix,*)
+        LOOP FOR iz=0 TO nxc-1
+          ! y2-derivatives
+          LOOP FOR IY1=-1 TO ny+1
+            k=[IF IY1=-1 THEN 2 ELSE IF IY1=0 THEN 1 ELSE IF IY1=ny THEN -1 ELSE IF IY1=ny+1 THEN -2 ELSE 0]
+            LOOP FOR IY2=-1 TO ny+1
+              j=[IF IY2=-1 THEN 2 ELSE IF IY2=0 THEN 1 ELSE IF IY2=ny THEN -1 ELSE IF IY2=ny+1 THEN -2 ELSE 0]
+              WITH derivs_standalone(IY2),gkemem(IY1,IY2,iz):
+                phiC   =~-[SUM 0.5*ni*d1(i)*gkemem(IY1,IY2+i+j,iz).scaleENER FOR i=-2 TO 2]
+                phiR(2)=~-[SUM     ni*d1(i)*gkemem(IY1,IY2+i+j,iz).scaleENER FOR i=-2 TO 2]
+              WITH derivs_standalone(IY1),gkemem(IY1,IY2,iz):
+                phiC   =~-[SUM 0.5*ni*d1(i)*gkemem(IY1+i+k,IY2,iz).scaleENER FOR i=-2 TO 2]
+                phiR(2)=~+[SUM     ni*d1(i)*gkemem(IY1+i+k,IY2,iz).scaleENER FOR i=-2 TO 2]
+            REPEAT
+          REPEAT
+        REPEAT
+        gkedata(*,*,ix,*)=gkemem
+REPEAT derivatives
+<*printf("\r                                            \r");*>
+CLOSE(gkedata)
+
+
+!(
+! Compute Derivatives
+! -------------------------------
+IF has_terminal THEN WRITE "Computing y-derivatives..."
+SHARED ARRAY(-1..ny+1,-1..ny+1,0..nzc-1) OF GKETERMS gkemem=0
 SHARED ARRAY(-1..ny+1) OF REAL dy1scaleENER=0,dy2scaleENER=0
 ! Derive final terms
 ! -------------------------------
@@ -167,4 +198,6 @@ LOOP derivatives FOR ix=0 TO nxc-1
         gkedata(*,*,ix,*)=gkemem
 REPEAT derivatives
 <*printf("\r                                            \r");*> 
+!)
+
 CLOSE(gkedata)

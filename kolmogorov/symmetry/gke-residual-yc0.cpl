@@ -1,0 +1,154 @@
+! 
+! This program computes:
+! 
+! * the residual of the GKE in the (rx,rz,Yc) plane, but for ry=0 
+! * d(phiR.yy)/dry needed for the computation of the extended source
+! 
+! This program is *NOT* parallel, but could easily be parallelized
+! 
+
+gamma=0
+USE rtchecks
+USE ../../dnsdata
+USE ../../dnsdirect
+USE ../../tke/convenience
+WRITE BY NAME nxd,nzd
+
+! Parameters
+! -----------------------------
+in_path=COMMANDLINE(4)
+! -----------------------------
+nxc=2*nxd; nzc=nzd; izd==izdV(iz)
+dx=PI/(alfa0*nxd); dz=2*PI/(beta0*nzd)
+
+! Definitions
+! -----------------------------
+GKETERMS = STRUCTURE(ARRAY(1..3) OF REAL phiR; REAL phic, scaleENER, scalePROD)
+
+INTEGER startpos(-1..ny DIV 2 +1)=0
+DO startpos(iy+1)=startpos(iy)+(ny-2*iy+1) FOR iy=-1 TO ny DIV 2
+POINTER TO STORED ARRAY(0..startpos(ny DIV 2 +1)-1,0..nxc-1,0..nzc-1) OF GKETERMS gkedata=OPENRO(in_path)
+
+SHARED ARRAY(-1..ny DIV 2,0..nxc-1,0..nzc-1) OF REAL phiRx=0,phiRz=0,phiRy=0,phiC=0,source=0,ener=0
+SHARED ARRAY(-1..ny DIV 2,0..nxc-1,0..nzc-1) OF REAL dphiRy=0,dphiRx=0,dphiRz=0,dphiC=0,residual=0
+
+! Compute Derivatives
+! -------------------------------
+IF has_terminal THEN WRITE "Computing y-derivatives..."
+! Symmetry-aware helper functions to get correct indices 
+INLINE FUNCTION indx(INTEGER i,j)=startpos(i)+j-i
+INLINE FUNCTION gkeP(INTEGER i,j)=gkedata(indx(i,j),ix,iz)
+INLINE FUNCTION gkeM(INTEGER i,j)=gkedata(indx(i,j),(2*nxd-ix) MOD (2*nxd),(nzd-iz) MOD nzd)
+! Symmetry-aware helper functions to get correct indices
+INLINE FUNCTION gkeiy2(INTEGER i,j)=(IF j<i THEN gkeM(j,i) ELSE IF j>ny-i THEN gkeP(ny-j,ny-i) ELSE gkeP(i,j))
+INLINE FUNCTION gkeiy1(INTEGER i,j)=(IF i>ny DIV 2 THEN gkeiy2(j,i) ELSE gkeiy2(i,j))
+! Change sign if needed when resorting to symmetry
+INLINE FUNCTION symm2(INTEGER i,j)=(IF j<i OR j>ny-i THEN -1.0 ELSE 1.0)
+INLINE FUNCTION symm1(INTEGER i,j)=(IF i>(ny DIV 2) THEN -1.0*symm2(ny-i,ny-j) ELSE symm2(i,j))
+! -------------------------------
+LOOP derivatives FOR ix=0 TO nxc-1
+        INTEGER waitbar=(100*ix)DIV(nxc-1); <*printf("\r %d %% completed          ",waitbar_); fflush(stdout);*>
+        LOOP FOR iz=0 TO nxc-1
+          ! y2-derivatives
+          LOOP FOR IY1=-1 TO ny DIV 2
+            LOOP FOR IY2=IY1 TO IY1
+              j=[IF IY2=-1 THEN 2 ELSE IF IY2=0 THEN 1 ELSE IF IY2=ny THEN -1 ELSE IF IY2=ny+1 THEN -2 ELSE 0]
+              WITH derivs_standalone(IY2):
+                dphiRy(IY1,ix,iz) =~+[SUM 0.5*symm2(IY1,IY2+i+j)*d1(i)*gkeiy2(IY1,IY2+i+j).phiR(2) FOR i=-2 TO 2]
+            REPEAT
+          REPEAT
+          ! y1-derivatives
+          LOOP FOR IY1=-1 TO ny DIV 2
+            j=[IF IY1=-1 THEN 2 ELSE IF IY1=0 THEN 1 ELSE IF IY1=ny THEN -1 ELSE IF IY1=ny+1 THEN -2 ELSE 0]
+            LOOP FOR IY2=IY1 TO IY1
+              WITH derivs_standalone(IY1):
+                dphiRy(IY1,ix,iz) =~-[SUM 0.5*symm1(IY1+i+j,IY2)*d1(i)*gkeiy1(IY1+i+j,IY2).phiR(2) FOR i=-2 TO 2]
+            REPEAT
+          REPEAT
+        REPEAT
+REPEAT derivatives
+<*printf("\r                                            \r");*>
+
+! Extract gke data into memory
+! -----------------------------
+LOOP FOR iy=-1 TO ny DIV 2
+  DO WITH gkedata(startpos(iy),ix,iz):
+    phiRx(iy,ix,iz) = phiR(1)
+    phiRy(iy,ix,iz) = phiR(2)
+    phiRz(iy,ix,iz) = phiR(3)
+    phiC(iy,ix,iz)  = phic
+    source(iy,ix,iz) = scalePROD
+    ener(iy,ix,iz) = scaleENER
+  FOR ix=0 TO nxc-1 AND iz=0 TO nzc-1
+REPEAT
+CLOSE(gkedata)
+
+! Compute dphiC/dYc
+! -----------------------------
+LOOP FOR iy=-1 TO ny DIV 2
+  ARRAY(0..4,0..4) OF REAL matder=0
+  ARRAY(0..4) OF REAL tnder=0
+  ARRAY(-2..2) OF REAL d1=0
+  j=[IF iy=-1 THEN 2 ELSE IF iy=0 THEN 1 ELSE IF iy=ny DIV 2 -1 THEN -1 ELSE IF iy=ny DIV 2 THEN -2 ELSE 0]
+  DO matder(ir,ic) = (y(iy-2+ic+j)-y(iy))^(4-ir) FOR ic=0 TO 4 AND ir=0 TO 4
+  LUdecomp matder
+  d1=0; tnder=0; tnder(3) = 1
+  d1(-2+(*)) = matder\tnder
+  DO dphiC(iy,ix,iz) = [SUM d1(i)*phiC(iy+i+j,ix,iz) FOR i=-2 TO 2] FOR ALL ix,iz
+REPEAT
+
+! Compute dphiRx/drx (with central FD)
+! -----------------------------
+dphiRx(*,(1..nxc-2),*) = [phiRx(*,(1..nxc-2)+1,*)-phiRx(*,(1..nxc-2)-1,*)]/(2*dx)
+dphiRx(*,0,*) = [phiRx(*,1,*)-phiRx(*,0,*)]/dx
+dphiRx(*,nxc-1,*) = [phiRx(*,nxc-1,*)-phiRx(*,nxc-2,*)]/dx
+
+! Compute dphiRz/drz (with central FD)
+! -----------------------------
+dphiRz(*,*,(1..nzc-2)) = [phiRz(*,*,(1..nzc-2)+1)-phiRz(*,*,(1..nzc-2)-1)]/(2*dz)
+dphiRz(*,*,0) = [phiRz(*,*,1)-phiRz(*,*,0)]/dz
+dphiRz(*,*,nzc-1) = [phiRz(*,*,nzc-1)-phiRz(*,*,nzc-2)]/dz
+
+! Compute residual
+! -----------------------------
+residual = source-dphiRy-dphiRx-dphiRz-dphiC
+
+! Write out
+! -----------------------------
+FILE outdata
+
+outdata = CREATE('source.bin')
+WRITE BINARY TO outdata source
+CLOSE(outdata)
+
+outdata = CREATE('energy.bin')
+WRITE BINARY TO outdata ener
+CLOSE(outdata)
+
+outdata = CREATE('residual.bin')
+WRITE BINARY TO outdata residual
+CLOSE(outdata)
+
+outdata = CREATE('phiry.bin')
+WRITE BINARY TO outdata phiRy
+CLOSE(outdata)
+
+outdata = CREATE('dphiry.bin')
+WRITE BINARY TO outdata dphiRy
+CLOSE(outdata)
+
+outdata = CREATE('phiC.bin')
+WRITE BINARY TO outdata phiC
+CLOSE(outdata)
+
+outdata = CREATE('dphiC.bin')
+WRITE BINARY TO outdata dphiC
+CLOSE(outdata)
+
+outdata = CREATE('dphirx.bin')
+WRITE BINARY TO outdata dphiRx
+CLOSE(outdata)
+
+outdata = CREATE('dphirz.bin')
+WRITE BINARY TO outdata dphiRz
+CLOSE(outdata)
