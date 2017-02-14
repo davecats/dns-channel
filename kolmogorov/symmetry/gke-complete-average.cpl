@@ -1,0 +1,48 @@
+! 
+! Computes the source term, space and scale flux
+! in the generalized Kolmogorov equation specialized
+! for channel flow, as in Marati, Casciola, Piva, JFM 2004,
+! equation 3.4 and following definitions.
+! 
+! This program IS parallel with shared memory support
+!  
+
+gamma=0
+!USE rtchecks
+USE ../../dnsdata
+USE ../../dnsdirect
+USE ../../tke/convenience
+
+! Parameters
+! -----------------------------
+nfmin=1
+nfmax=4
+dn=1
+! -----------------------------
+INTEGER nftot=[(nfmax-nfmin) DIV dn]+1
+ARRAY(-nz..nz) OF INTEGER izdV=0; DO izdV(iz)=IF iz>=0 THEN iz ELSE nzd+iz FOR iz=-nz TO nz
+nxc=(2*nxd); nzc=nzd; izd==izdV(iz)
+
+! Definitions
+! -----------------------------
+GKETERMS = STRUCTURE(ARRAY(1..3) OF REAL phiR; REAL phiC, scaleENER, scalePROD)
+INTEGER startpos(-1..ny DIV 2 +1)=0
+
+DO startpos(iy+1)=startpos(iy)+(ny-2*iy+1) FOR iy=-1 TO ny DIV 2
+ARRAY(nfmin..nfmax) OF POINTER TO STORED ARRAY(0..startpos(ny DIV 2 +1)-1,0..nxc-1,0..nzc-1) OF GKETERMS gkedata_in
+POINTER TO STORED ARRAY(0..startpos(ny DIV 2 +1)-1,0..nxc-1,0..nzc-1) OF GKETERMS gkedata_out=CREATE("gke-complete.bin")
+DO gkedata_in(if) = OPENRO("gke-complete."if".bin") FOR if=nfmin TO nfmax
+
+! Average
+! -----------------------------
+LOOP FOR iy=0 TO startpos(ny DIV 2 +1)-1
+  ARRAY(0..nfmax,0..nxc-1,0..nzc-1) OF GKETERMS gke=0
+  DO gke(if,*,*)=gkedata_in(if,iy,*,*); FOR if=nfmin TO nfmax
+  DO WITH gke(0,ix,iz): 
+    phiR(*)=~+gke(if,ix,iz).phiR(*)/nftot; 
+    phiC=~+gke(if,ix,iz).phiC/nftot; 
+    scaleENER=~+gke(if,ix,iz).scaleENER/nftot; 
+    scalePROD=~+gke(if,ix,iz).scalePROD/nftot; 
+  FOR ALL ix,iz AND if=nfmin TO nfmax
+  gkedata_out(iy,*,*)=gke(0,*,*)
+REPEAT

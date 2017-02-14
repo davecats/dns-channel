@@ -62,12 +62,17 @@ IF has_terminal THEN WRITE "Computing Kolmogorov Equation..."
 
 ! Compute Kolmogorov Equation
 ! -------------------------------
-LOOP files FOR if=nfmin TO nfmax BY dn
-        ! Cleaning stdout
-        IF if>nfmin THEN <*printf("\r                                            \r");*> END IF
+LOOP outer FOR iy1=-1 TO ny+1
+     ! Symmetry-aware heler variable 
+     IY1 = IF iy1>ny DIV 2 THEN ny-iy1 ELSE iy1; sig = IF iy1>ny DIV 2 THEN -1 ELSE 1; c = IF iy1=ny DIV 2 THEN 1 ELSE 0.5
+     ! Reload data for this iy1, need for averaging "on disk"
+     IF iy1>ny DIV 2 THEN  gke(IY1+(0..ny-2*IY1),*,*)=gkedata(startpos(IY1)+(0..ny-2*IY1),*,*) ELSE gke(IY1+(0..ny-2*IY1),*,*)=0; END IF
+     ! Output progress
+     INTEGER waitbar=100*(iy1+1)DIV(ny+1); <*printf("\r %d %% completed          ",waitbar_); fflush(stdout);*>
+     LOOP files FOR if=nfmin TO nfmax BY dn
         ! Loading data
         STRING field_name = WRITE("Field"if".fld")
-        read_field_parallel(field_name)
+        read_field_parallel(field_name); 
         ! Pressure field
         STRING pressure_name = WRITE('pField'if'.fld'); pressuredata=OPEN(pressure_name)
         p=pressuredata; CLOSE(pressuredata)
@@ -75,14 +80,6 @@ LOOP files FOR if=nfmin TO nfmax BY dn
         WITH mean(*),V(0,0,*): u.REAL=~-U; w.REAL=~-W; p(0,0,*)=~-P;
         ! Start computation of correlations
         PARALLEL LOOP FOR ismp=0 TO nsmp-1
-        LOOP outer FOR iy1=-1 TO ny+1  
-        ! Symmetry-aware heler variable 
-          IY1 = IF iy1>ny DIV 2 THEN ny-iy1 ELSE iy1; sig = IF iy1>ny DIV 2 THEN -1 ELSE 1; c = IF iy1=ny DIV 2 THEN 1 ELSE 0.5
-        ! Output progress
-          IF ismp=0 THEN INTEGER waitbar=100*(iy1+1)DIV(ny+1); <*printf("\r %d %% completed          ",waitbar_); fflush(stdout);*>
-        ! Reload data for this iy1, need for averaging "on disk"
-          IF ismp=0 THEN IF if>nfmin OR iy1>ny DIV 2 THEN  gke(IY1+(0..ny-2*IY1),*,*)=gkedata(startpos(IY1)+(0..ny-2*IY1),*,*) ELSE gke(IY1+(0..ny-2*IY1),*,*)=0; END IF
-          SYNC(ismp,nsmp)
         ! Compute pseudo-spectral correlations
           convolutions(V(*,*,iy1),VVd(*,*,1))
           LOOP inner FOR IY2=IY1 TO ny-IY1
@@ -141,14 +138,12 @@ LOOP files FOR if=nfmin TO nfmax BY dn
             FOR ix=ismp*nxc DIV nsmp TO (ismp+1)*nxc DIV nsmp -1
             SYNC(ismp,nsmp)
           REPEAT inner
-        ! Average on disk
-          IF ismp=0 THEN
-            IF if=nfmax AND iy1>=ny DIV 2 THEN WITH gke(IY1+(0..ny-2*IY1),*,*):INLINE LOOP FOR i IN (phiR,phiC,scaleENER,scalePROD) i=~*c/nftot;REPEAT
-            gkedata(startpos(IY1)+(0..ny-2*IY1),*,*)=gke(IY1+(0..ny-2*IY1),*,*)
-          END IF
-        REPEAT outer
         REPEAT
-REPEAT files
+     REPEAT files
+     ! Write out
+     IF iy1>=ny DIV 2 THEN WITH gke(IY1+(0..ny-2*IY1),*,*):INLINE LOOP FOR i IN (phiR,phiC,scaleENER,scalePROD) i=~*c/nftot;REPEAT
+     gkedata(startpos(IY1)+(0..ny-2*IY1),*,*)=gke(IY1+(0..ny-2*IY1),*,*)
+REPEAT outer
 <*printf("\r                                            \r");*> 
 
 ! Compute Derivatives
