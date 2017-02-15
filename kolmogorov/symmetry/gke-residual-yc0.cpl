@@ -35,10 +35,11 @@ SHARED ARRAY(-1..ny DIV 2,0..nxc-1,0..nzc-1) OF REAL dphiRy=0,dphiRx=0,dphiRz=0,
 ! Compute Derivatives
 ! -------------------------------
 IF has_terminal THEN WRITE "Computing y-derivatives..."
+SHARED ARRAY(0..startpos(ny DIV 2 +1)-1,0..nzc-1) OF GKETERMS gkemem=0,gkememM=0
 ! Symmetry-aware helper functions to get correct indices 
 INLINE FUNCTION indx(INTEGER i,j)=startpos(i)+j-i
-INLINE FUNCTION gkeP(INTEGER i,j)=gkedata(indx(i,j),ix,iz)
-INLINE FUNCTION gkeM(INTEGER i,j)=gkedata(indx(i,j),(2*nxd-ix) MOD (2*nxd),(nzd-iz) MOD nzd)
+INLINE FUNCTION gkeP(INTEGER i,j)=gkemem(indx(i,j),iz)
+INLINE FUNCTION gkeM(INTEGER i,j)=gkememM(indx(i,j),(nzd-iz) MOD nzd)
 ! Symmetry-aware helper functions to get correct indices
 INLINE FUNCTION gkeiy2(INTEGER i,j)=(IF j<i THEN gkeM(j,i) ELSE IF j>ny-i THEN gkeP(ny-j,ny-i) ELSE gkeP(i,j))
 INLINE FUNCTION gkeiy1(INTEGER i,j)=(IF i>ny DIV 2 THEN gkeiy2(j,i) ELSE gkeiy2(i,j))
@@ -48,6 +49,7 @@ INLINE FUNCTION symm1(INTEGER i,j)=(IF i>(ny DIV 2) THEN -1.0*symm2(ny-i,ny-j) E
 ! -------------------------------
 LOOP derivatives FOR ix=0 TO nxc-1
         INTEGER waitbar=(100*ix)DIV(nxc-1); <*printf("\r %d %% completed          ",waitbar_); fflush(stdout);*>
+        gkemem=gkedata(*,ix,*); gkememM=gkedata(*,(2*nxd-ix) MOD (2*nxd),*)
         LOOP FOR iz=0 TO nxc-1
           ! y2-derivatives
           LOOP FOR IY1=-1 TO ny DIV 2
