@@ -111,7 +111,7 @@ LOOP files FOR if=nfmin TO nfmax BY dn
 #define Rturb(f,g) ( pR(R(1,2),f) - mR(R(2,1),f) + 2*pR(R(1,2),g) - 2*mR(R(2,1),g) + R0(R(2,2),f) - R0(R(1,1),f) )
 #define Cturb(f,g) ( pR(R(1,2),f) + mR(R(2,1),f) - 2*pR(R(1,2),g) - 2*mR(R(2,1),g) + R0(R(2,2),f) + R0(R(1,1),f) )
 #define Rsum(f)    ( R0(R(2,2),f) + R0(R(1,1),f) -   pR(R(1,2),f) -   mR(R(2,1),f) )
-#define Ravg(f)    ( R0(R(2,2),f) + R0(R(1,1),f) -   pR(R(1,2),f) +   mR(R(2,1),f) )
+#define Ravg(f)    ( R0(R(2,2),f) - R0(R(1,1),f) -   pR(R(1,2),f) +   mR(R(2,1),f) )
             DO WITH gke(IY2,ix,iz), mean(*), uiuj(*):
               phiR(1) = ~+     Rturb(uuu,uuu) + Rturb(vvu,uvv) + Rturb(wwu,uww)
               phiR(2) = ~+sig*[Rturb(uuv,uvu) + Rturb(vvv,vvv) + Rturb(wwv,vww)]
