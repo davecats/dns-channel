@@ -1,0 +1,58 @@
+gamma=0
+USE ../../../dnsdata
+USE ../../../dnsdirect
+!USE rtchecks
+USE ../../../tke/convenience
+
+! Parameters
+! -----------------------------
+INTEGER nfmin,nfmax,dn
+nfmin=atoi(COMMANDLINE(4))
+nfmax=atoi(COMMANDLINE(5))
+dn=atoi(COMMANDLINE(6))
+!------------------------------
+
+
+
+! Definitions
+! ------------------------------------
+#define cprod(f,g,h) h.REAL=f.REAL*g.REAL; h.IMAG=f.IMAG*g.IMAG
+#define cprod3(f,g,k,h) h.REAL=f.REAL*g.REAL*k.REAL; h.IMAG=f.IMAG*g.IMAG*k.IMAG
+SHARED ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) OF COMPLEX pressure=0
+SHARED ARRAY(0..nx,-nz..nz,nyl-2..nyh+2) OF DERIVS Vder=0
+COMPLEX  pbuf(0..nx,-nz..nz)
+POINTER TO STORED ARRAY(nyl-2..nyh+2,0..nx,-nz..nz) OF COMPLEX pressuredata
+
+USE ../../../poisson/poisson_solver_parallel
+
+! Compute the pressure field
+! ------------------------------------
+LOOP files FOR n=nfmin TO nfmax BY dn
+  STRING field_name = WRITE('Field'n'.fld')
+  read_field_parallel(field_name)
+  compute_pressure(Vder,pressure)
+  IF NOT first THEN READ FROM prev
+  STRING cart_name = WRITE('Dati.cart.'n'.fld')
+  STRING pfield_name = WRITE('pField'n'.fld')
+  diskimage = OPEN(cart_name)
+  pressuredata = CREATE(pfield_name)
+  WITH diskimage:
+    IF has_terminal THEN
+      WRITE "Writing " cart_name
+      WRITE TO header <<??
+         ny=??ny??       nx=??nx??       nz=??nz??
+	 alfa0=??alfa0??     beta0=??beta0??
+         ymin=??ymin??        ymax=??ymax??          a=??a??
+         ni=??1/ni??       time=??time??
+         ??
+    END IF
+   LOOP FOR iy = miny TO maxy
+     DO velbuf(0..nx,iz) = V(0..nx,iz,iy); pbuf(0..nx,iz)=pressure(0..nx,iz,iy) FOR ALL iz
+     Vimage(iy) = velbuf
+     pressuredata(iy,*,*) = pbuf(*,*)
+   REPEAT LOOP
+  CLOSE diskimage
+  CLOSE(pressuredata)
+  IF NOT last THEN WRITE TO next
+REPEAT files
+     
