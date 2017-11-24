@@ -143,12 +143,12 @@ LOOP fields FOR n=nfmin TO nfmax BY dn
           cprod3(u,v,v,PHIttrspd(ix,iz,4));   cprod3(u,v,w,PHIttrspd(ix,iz,5));    cprod3(v,v,w,PHIttrspd(ix,iz,6));
       FOR ALL ix
       WITH VVderd(*,iz): INLINE LOOP FOR iii IN (ux2,vx2,wx2,uy2,vy2,wy2,uz2,vz2,wz2,uxvx,uyvy,uzvz,uxwx,uywy,uzwz,vxwx,vywy,vzwz); HFT(iii); REPEAT
-      DO HFT(PHIttrspd(*,iz,i)) FOR i=1 TO 3
+      DO HFT(PHIttrspd(*,iz,i)) FOR ALL i
     FOR iz=ismp*(HI+1) DIV nsmp TO (ismp+1)*(HI+1) DIV nsmp -1
     SYNC(ismp,nsmp)
     DO WITH VVderd(ix,*):
       INLINE LOOP FOR iii IN (ux2,vx2,wx2,uy2,vy2,wy2,uz2,vz2,wz2,uxvx,uyvy,uzvz,uxwx,uywy,uzwz,vxwx,vywy,vzwz); FFT(iii); REPEAT
-      DO FFT(PHIttrspd(ix,*,i)); FOR i=1 TO 3
+      DO FFT(PHIttrspd(ix,*,i)); FOR ALL i
     FOR ix=ismp*(nx+1) DIV nsmp TO (ismp+1)*(nx+1) DIV nsmp -1
     SYNC(ismp,nsmp)
     IF ismp=0 THEN WITH VVderd(0,0), uiuj(iy):
