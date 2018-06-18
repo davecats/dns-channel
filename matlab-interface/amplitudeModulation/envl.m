@@ -1,7 +1,7 @@
-function f=envl(f,sig,cutoff,freq)
+function f=envl(f,sig,filterfun,filterpars)
 % Upper (sig=1) or lower (sig=-1) envelope of a small-scale real signal
-% f, sampled at a frequency freq and obtained by a 6th-order, delay-coorected 
-% low-pass filter with cut-off frequency cutoff.
+% f, low-pass filtered by the custom filter @filterfun with parameters
+% @filterpars. 
 %
 % If f is a matrix, then the function operates along the columns of f.
 %
@@ -17,4 +17,4 @@ f=hilbert(f);
 % Modulus of augmented signal
 f=abs(f);
 % Low-pass filter the signal
-f=2*sig*lowpass(f,cutoff,freq,'ImpulseResponse','iir','Steepness',0.95,'StopbandAttenuation',100);
+f=2*sig*filterfun(f,filterpars{:});
