@@ -1,55 +1,20 @@
-% This function imports a field produced with dns-channel and 
-% outputs the velocity field converted in (u,v,w). It can read the whole
-% field or a single plane. 
+function field=veta2uvw(field,params,derivatives)
+% Converts from (v,eta) -> (u,v,w)
+% not memory efficient but fast, use only for small fields
 
-% --------------- Programm zur Auswertung von *.fld Dateien ---------------
-%
-% Ziel :    Geschwindigkeitskomponenten (V,Eta) aus einer spectral-
-%           Diskretisierung in reale Geschwindigkeiten (u,v,w) in einem 
-%           spatialen Gitter umrechnen
-%           und eine besondere Ebene y=const lesen (y=0:ny)
- 
-% Etapen des Programms :
-%   1) die Rohdaten der binären Datei durch die Funktion 'importieren' 
-%       speichern
-%   2) (u,v,w) aus (v,Eta) berechnen (FFT-spectrum) :
-%           u=1/k²*j(ix*kx*[dv/dy]-iz*kz*Eta)
-%           w=1/k²*j(ix*kx*Eta+iz*kz*[dv/dy])
-%       mit k²=ix²*kx²+iz²*kz² und dvdy die Ableitung von v in der y-Richt
-%       (hier wird eine zentrale Differenzierung benutzt)
-%        /\     Der erste Modus (z=0,x=0) ist mit dieser Berechnung nicht
-%       /__\    beinhaltet, der muss als (U,W) dazu addiert werden.
-%   3) die in FFT- representation Daten in realen daten umrechnen
+ny=params.ny;
+nx=params.nx;
+nz=params.nz;
 
-% =========================================================================
+vy = reshape((derivatives.d0\(derivatives.d1*reshape(field.veta(1,:,:,:),[(nx+1)*(2*nz+1), ny+3])'))',[1,2*nz+1,nx+1,ny+3]);
 
-function [data2,U,W,dns]=veta2uvw(filename)
+field.uvw = zeros(3,2*nz+1,nx+1,ny+3);
+alfa=repmat(reshape((0:nx),[1,1,nx+1,1])*params.alfa0,[1,2*nz+1,1,ny+3]); 
+beta=repmat(reshape((-nz:nz),[1,2*nz+1,1,1])*params.alfa0,[1,1,nx+1,ny+3]); 
+k2=alfa.^2 + beta.^2;
+field.uvw(1,:,:,:) = 1j*(alfa.*vy-beta.*field.veta(2,:,:,:))./k2; % u
+field.uvw(2,:,:,:) = field.veta(2,:,:,:); % v
+field.uvw(3,:,:,:) = 1j*(beta.*vy+alfa.*field.veta(2,:,:,:))./k2; % w
 
-%   1) Rohdaten speichern
-% -------------------------------------------------------------------------
-[dns,U,W,data2]=import_fld(filename);
-
-%   2) (u,w) aus (v,Eta) berechnen
-% -------------------------------------------------------------------------
-y=zeros(dns.ny+3,1);
-for i=1:dns.ny+3
-    y(i)=dns.ymin+0.5*(dns.ymax-dns.ymin)*(tanh(dns.a*(2*(i-2)/dns.ny-1))/tanh(dns.a)+0.5*(dns.ymax-dns.ymin));
-end
-disp('Converting (v,eta) --> (u,v,w)')
-for iy=2:dns.ny+2
-  data2(1,:,:,iy)=(data2(2,:,:,iy+1)-data2(2,:,:,iy-1))./(y(iy+1)-y(iy-1)); %dvdy
-end
-for ix=1:dns.nx+1
-    alfa=(ix-1)*dns.alfa0;
-    for iz=1:2*dns.nz+1
-        beta=(iz-1-dns.nz)*dns.beta0; k2=alfa^2+beta^2;
-        for iy = 2:dns.ny+2
-          tmp = 1j*(alfa*data2(1,iz,dns.nx+ix,iy)-beta*data2(3,iz,dns.nx+ix,iy))/k2;
-          data2(3,iz,dns.nx+ix,iy)=1j*(beta*data2(1,iz,dns.nx+ix,iy)+alfa*data2(3,iz,dns.nx+ix,iy))/k2;
-          data2(1,iz,dns.nx+ix,iy)=tmp;
-        end
-    end
-end
-data2(1,dns.nz+1,dns.nx+1,:)=U(:);
-data2(3,dns.nz+1,dns.nx+1,:)=W(:);
-
+field.uvw(1,nz+1,1,:)=field.U;
+field.uvw(3,nz+1,1,:)=field.W;
