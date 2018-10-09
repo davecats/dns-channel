@@ -28,6 +28,7 @@ SUBROUTINE read_field_uvw(STRING field_name) FOLLOWS
 SUBROUTINE velocity_gradient(POINTER TO ARRAY(*,*,*) OF DERIVS Vder) FOLLOWS
 SUBROUTINE deriv2(ARRAY(*) OF REAL f0,f2^) FOLLOWS
 REAL FUNCTION yintf(REAL f(*)) FOLLOWS
+SUBROUTINE convolution(ARRAY(*) OF COMPLEX h,f,g; ARRAY(*,*) OF REAL conv^) FOLLOWS
 
 MODULE convenience
 
@@ -159,5 +160,12 @@ IF last THEN
 END IF
 LeftLUDivStep1(f2,D0mat,f2)
 END deriv2
+
+SUBROUTINE convolution(ARRAY(*) OF COMPLEX h,f,g; ARRAY(*,*) OF REAL conv^)
+  LOOP FOR n=0 TO f.HI
+    c=IF n=0 THEN 1 ELSE 2
+    DO conv(n,m)=~+c*{h(n)*f(m)*g(n-m)}.REAL FOR m=f.LO TO f.HI EXCEPT ABS(n-m)>f.HI
+  REPEAT
+END convolution
 
 END convenience

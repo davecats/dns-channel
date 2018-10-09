@@ -17,7 +17,7 @@ ARRAY(1..6) OF STRING terms, intterms
 terms(1)="uu.dat"; terms(2)="vv.dat"; terms(3)="ww.dat"; terms(4)="uv.dat"; terms(5)="uw.dat"; terms(6)="vw.dat"
 intterms(1)="uuintegrals.dat"; intterms(2)="vvintegrals.dat"; intterms(3)="wwintegrals.dat";
 intterms(4)="uvintegrals.dat"; intterms(5)="uwintegrals.dat"; intterms(6)="vwintegrals.dat"
-MEANTERMS = STRUCTURE(REAL U,W,Uy,Wy,Uyy,Wyy)
+MEANTERMS = STRUCTURE(REAL U,W,Uy,Wy,Uyy,Wyy,P)
 MKETERMS = STRUCTURE(REAL pump,produv,prodvw,ttrsp,vdiff,dissU,dissW,PHIttrsp,PHIvdiff)
 BALANCE = STRUCTURE(ARRAY(1..6) OF REAL var,prod,psdiss,ttrsp,vdiff,pstrain,ptrsp,PHIttrsp,PHIvdiff,PHIptrsp)
 POINTER TO STORED STRUCTURE[
