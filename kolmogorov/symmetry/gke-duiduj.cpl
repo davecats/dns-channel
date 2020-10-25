@@ -6,7 +6,7 @@
 !  
 
 gamma=0
-USE rtchecks
+!USE rtchecks
 USE ../../dnsdata
 USE ../../dnsdirect
 USE ../../tke/convenience
@@ -165,8 +165,8 @@ LOOP files FOR if=nfmin TO nfmax BY dn
               phiR(1) = ~+sig*Rsum(VW)*[ U(iy2)-U(iy1) ]; phiR(2) = ~+0; phiR(3) = ~+sig*Rsum(VW)*[ W(iy2)-W(iy1) ]
               phiC = ~+0.5*[Cturb(vwv,vvw,vwv)]; phiC = ~+Rsum(PW)
               scalePROD = ~+ 0; scalePROD = ~+0; scalePROD = ~-sig*(psdiss(iy1,6)+psdiss(iy2,6)); scalePROD = ~+sig*[Rsum(PVz)+Rsum(PWy)]
-
             FOR ix=ismp*nxc DIV nsmp TO (ismp+1)*nxc DIV nsmp -1 AND iz=0 TO nzc-1 
+          SYNC(ismp,nsmp)
           REPEAT inner
           !Average on disk
           IF ismp=0 THEN
@@ -273,7 +273,6 @@ gke(iy1+(0..ny-2*iy1),*,*)=gkedata2(startpos(iy1)+(0..ny-2*iy1),*,*)
   REPEAT
   gkedata2(startpos(iy1)+(0..ny-2*iy1),*,*)=gke(iy1+(0..ny-2*iy1),*,*)
 REPEAT
-
 
 
 <*printf("\r                                            \r");*>
